@@ -79,6 +79,18 @@ esac
 # Python 版本号 (去掉点: 3.11 -> 311)
 PY_VER_SHORT="${PYTHON_VERSION//./}"
 
+# ===== 前置依赖检查 =====
+# GNU tar (macOS BSD tar 会写入 ._* 扩展属性文件)
+if ! command -v gtar &>/dev/null; then
+    if command -v brew &>/dev/null; then
+        echo "安装 GNU tar..."
+        brew install gnu-tar
+    else
+        echo "错误: 需要 GNU tar (gtar), 请先安装 Homebrew 后运行: brew install gnu-tar"
+        exit 1
+    fi
+fi
+
 echo "============================================"
 echo "  Auto-Mihomo 构建部署包"
 echo "============================================"
@@ -157,6 +169,12 @@ cp uv.lock "${BUILD_DIR}/auto-mihomo/uv.lock"
 REQUIREMENTS_TMP=$(mktemp)
 uv export --format requirements-txt --no-hashes > "$REQUIREMENTS_TMP"
 
+# 创建临时 venv 并安装 pip (uv 默认不包含 pip)
+echo "  准备 pip 环境..."
+PIP_VENV=$(mktemp -d)/venv
+uv venv --seed --quiet "$PIP_VENV"
+PIP_CMD="${PIP_VENV}/bin/pip"
+
 # 构建 --platform 参数
 PLATFORM_ARGS=()
 for plat in "${PIP_PLATFORMS[@]}"; do
@@ -164,16 +182,15 @@ for plat in "${PIP_PLATFORMS[@]}"; do
 done
 
 # 使用 pip download 进行跨平台下载
-# 分两步: 先下载平台无关的 (pure Python), 再下载平台相关的
 echo "  下载 wheels..."
-pip download \
+"$PIP_CMD" download \
     -r "$REQUIREMENTS_TMP" \
     "${PLATFORM_ARGS[@]}" \
     --python-version "$PY_VER_SHORT" \
     --only-binary=:all: \
     -d "${VENDOR_DIR}/wheels/" \
     --quiet 2>/dev/null || {
-        echo "  警告: 部分 wheels 下载失败, 尝试逐包下载..."
+        echo "  批量下载失败, 尝试逐包下载..."
         while IFS= read -r line; do
             # 跳过注释和空行
             [[ "$line" =~ ^[[:space:]]*# ]] && continue
@@ -181,7 +198,7 @@ pip download \
             # 提取包名 (去掉版本约束)
             pkg=$(echo "$line" | sed 's/[>=<;].*//' | xargs)
             [[ -z "$pkg" ]] && continue
-            pip download \
+            "$PIP_CMD" download \
                 "$pkg" \
                 "${PLATFORM_ARGS[@]}" \
                 --python-version "$PY_VER_SHORT" \
@@ -194,6 +211,7 @@ pip download \
     }
 
 rm -f "$REQUIREMENTS_TMP"
+rm -rf "$(dirname "$PIP_VENV")"
 
 WHEEL_COUNT=$(find "${VENDOR_DIR}/wheels" -name '*.whl' | wc -l | tr -d ' ')
 echo "  共 ${WHEEL_COUNT} 个 wheels"
@@ -211,22 +229,12 @@ VERSION_EOF
 echo ""
 echo "正在打包..."
 
-# 使用 GNU tar 以避免 macOS BSD tar 写入 ._* 扩展属性文件
-if command -v gtar &>/dev/null; then
-    TAR_CMD="gtar"
-elif tar --version 2>/dev/null | grep -q "GNU"; then
-    TAR_CMD="tar"
-else
-    echo "  警告: 未检测到 GNU tar, 使用系统 tar (可能包含 macOS 元数据)"
-    echo "  建议: brew install gnu-tar"
-    TAR_CMD="tar"
-fi
-
 DIST_DIR="${PROJECT_DIR}/dist"
 mkdir -p "$DIST_DIR"
 TARBALL="${DIST_DIR}/auto-mihomo-${APP_VERSION}-${TARGET_ARCH}-${GIT_HASH}.tar.gz"
 
-$TAR_CMD -czf "$TARBALL" -C "$BUILD_DIR" auto-mihomo
+# gtar 在前置检查中已确保安装
+gtar -czf "$TARBALL" -C "$BUILD_DIR" auto-mihomo
 
 # ===== 输出摘要 =====
 TARBALL_SIZE=$(ls -lh "$TARBALL" | awk '{print $5}')
