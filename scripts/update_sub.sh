@@ -245,6 +245,7 @@ HTTPS_PROXY=http://127.0.0.1:${MIXED_PORT}
 ALL_PROXY=socks5://127.0.0.1:${MIXED_PORT}
 no_proxy=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 NO_PROXY=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+GLOBAL_AGENT_HTTP_PROXY=http://127.0.0.1:${MIXED_PORT}
 SYSENV_EOF
         log_info "systemd 代理环境文件已写入: ${proxy_env}"
     fi
