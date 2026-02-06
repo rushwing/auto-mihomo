@@ -12,8 +12,10 @@ WorkingDirectory=/opt/openclaw
 # 从 auto-mihomo 统一管理的代理配置读取 (端口变更自动生效)
 EnvironmentFile=/etc/auto-mihomo/proxy.env
 
-# Node.js global-agent 需要单独配置
+# Node.js 内置 fetch (undici) 不读取 HTTP_PROXY 环境变量,
+# 通过 proxy-bootstrap.js 预加载 undici ProxyAgent (零外部依赖)
 Environment="HOME=/home/openclaw"
+Environment="NODE_OPTIONS=-r /opt/auto-mihomo/scripts/proxy-bootstrap.js"
 
 ExecStart=/home/openclaw/.npm-global/bin/openclaw gateway
 Restart=always
