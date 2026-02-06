@@ -1,0 +1,14 @@
+[project]
+name = "auto-mihomo"
+version = "0.1.0"
+description = "Automated Mihomo (Clash Meta) subscription manager for Raspberry Pi 5"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.100.0",
+    "uvicorn[standard]>=0.20.0",
+    "pyyaml>=6.0",
+    "httpx>=0.24.0",
+]
+
+[project.scripts]
+mcp-server = "scripts.mcp_server:main"

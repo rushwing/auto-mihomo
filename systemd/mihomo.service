@@ -1,0 +1,46 @@
+# =============================================================================
+# Mihomo (Clash Meta) systemd 服务
+#
+# 安装:
+#   sudo cp systemd/mihomo.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now mihomo
+#
+# 注意: 安装脚本 (install.sh) 会自动替换 __PLACEHOLDERS__
+# =============================================================================
+[Unit]
+Description=Mihomo (Clash Meta) Proxy Service
+Documentation=https://wiki.metacubex.one
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+
+# 配置文件路径 (由 install.sh 替换)
+ExecStart=__MIHOMO_BIN__ -d __MIHOMO_HOME__ -f __CONFIG_FILE__
+
+# 自动重启
+Restart=on-failure
+RestartSec=5
+
+# 资源限制
+LimitNOFILE=65535
+LimitNPROC=512
+
+# 安全加固
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=__MIHOMO_HOME__ __PROJECT_DIR__
+PrivateTmp=true
+
+# 网络能力 (需要绑定端口和透明代理)
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW
+
+# 环境变量
+Environment="MIHOMO_HOME=__MIHOMO_HOME__"
+
+[Install]
+WantedBy=multi-user.target

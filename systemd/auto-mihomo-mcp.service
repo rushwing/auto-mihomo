@@ -1,0 +1,40 @@
+# =============================================================================
+# Auto-Mihomo MCP Server systemd 服务
+#
+# 安装:
+#   sudo cp systemd/auto-mihomo-mcp.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now auto-mihomo-mcp
+#
+# 注意: 安装脚本 (install.sh) 会自动替换 __PLACEHOLDERS__
+# =============================================================================
+[Unit]
+Description=Auto-Mihomo MCP HTTP Server
+Documentation=https://github.com/your-repo/auto-mihomo
+After=network-online.target mihomo.service
+Wants=mihomo.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__PROJECT_DIR__
+
+# 使用 uv 管理的 .venv 中的 Python
+ExecStart=__PROJECT_DIR__/.venv/bin/python3 __PROJECT_DIR__/scripts/mcp_server.py
+
+# 自动重启
+Restart=on-failure
+RestartSec=5
+
+# 环境变量文件
+EnvironmentFile=__PROJECT_DIR__/.env
+
+# 资源限制
+LimitNOFILE=65535
+
+# 安全加固
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
