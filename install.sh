@@ -49,10 +49,21 @@ case "$ARCH" in
 esac
 echo "[1/7] 检测到架构: ${ARCH} → ${MIHOMO_ARCH}"
 
-# ===== [2/7] 安装系统依赖 =====
-echo "[2/7] 安装系统依赖..."
-sudo apt-get update -qq
-sudo apt-get install -y -qq python3 curl
+# ===== [2/7] 检查系统依赖 =====
+echo "[2/7] 检查系统依赖..."
+if [[ "$OFFLINE" == "true" ]]; then
+    # 离线模式: 跳过 apt-get (无网络), 仅验证已安装
+    for cmd in python3 curl; do
+        if ! command -v "$cmd" &>/dev/null; then
+            echo "  错误: 离线模式下缺少 ${cmd}, 请先在线安装"
+            exit 1
+        fi
+    done
+    echo "  python3 和 curl 已就绪"
+else
+    sudo apt-get update -qq
+    sudo apt-get install -y -qq python3 curl
+fi
 
 # ===== [3/7] 安装 uv =====
 echo "[3/7] 安装 uv 包管理器..."
@@ -75,6 +86,19 @@ echo "[4/7] 安装 Mihomo..."
 sudo mkdir -p "$MIHOMO_HOME"
 sudo chown "${CURRENT_USER}:${CURRENT_USER}" "$MIHOMO_HOME"
 
+# 停止正在运行的 mihomo (Linux 不允许覆盖运行中的二进制: "Text file busy")
+MIHOMO_WAS_RUNNING=false
+if command -v systemctl &>/dev/null && systemctl is-active --quiet mihomo 2>/dev/null; then
+    echo "  停止运行中的 Mihomo 服务..."
+    sudo systemctl stop mihomo
+    MIHOMO_WAS_RUNNING=true
+elif pgrep -x mihomo &>/dev/null; then
+    echo "  停止运行中的 Mihomo 进程..."
+    sudo pkill -x mihomo || true
+    sleep 1
+    MIHOMO_WAS_RUNNING=true
+fi
+
 if [[ "$OFFLINE" == "true" && -f "${VENDOR_DIR}/mihomo" ]]; then
     echo "  从部署包复制 Mihomo..."
     cp "${VENDOR_DIR}/mihomo" "${MIHOMO_HOME}/mihomo"
@@ -93,6 +117,12 @@ else
 fi
 echo "  Mihomo 已安装: ${MIHOMO_HOME}/mihomo"
 echo "  版本: $(${MIHOMO_HOME}/mihomo -v 2>/dev/null || echo '未知')"
+
+# 如果之前在运行, 重新启动
+if [[ "$MIHOMO_WAS_RUNNING" == "true" ]]; then
+    echo "  重新启动 Mihomo 服务..."
+    sudo systemctl start mihomo 2>/dev/null || true
+fi
 
 # ===== [5/7] 安装 GeoIP 数据 =====
 echo "[5/7] 安装 GeoIP 数据库..."
