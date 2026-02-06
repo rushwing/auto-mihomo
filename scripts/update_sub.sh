@@ -64,13 +64,29 @@ download_subscription() {
 
     local tmp_file="${SUB_FILE}.tmp"
     local http_code
+
+    # 先尝试直连 (绕过代理), 因为代理可能未启动或配置错误
+    # 订阅提供商通常可直连访问, 不需要代理
     http_code=$(curl -sL -w '%{http_code}' -o "$tmp_file" \
+        --noproxy '*' \
         --connect-timeout 15 \
         --max-time 60 \
         --retry 3 \
         --retry-delay 5 \
         -H "User-Agent: clash-meta" \
         "$SUB_URL")
+
+    # 直连失败则尝试通过代理下载 (订阅地址可能在境外)
+    if [[ "$http_code" != "200" ]]; then
+        log_warn "直连下载失败 (HTTP ${http_code}), 尝试通过代理..."
+        http_code=$(curl -sL -w '%{http_code}' -o "$tmp_file" \
+            --connect-timeout 15 \
+            --max-time 60 \
+            --retry 2 \
+            --retry-delay 3 \
+            -H "User-Agent: clash-meta" \
+            "$SUB_URL")
+    fi
 
     if [[ "$http_code" != "200" ]]; then
         rm -f "$tmp_file"
