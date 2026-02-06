@@ -160,13 +160,23 @@ sudo systemctl enable mihomo
 sudo systemctl enable auto-mihomo-mcp
 echo "  systemd 服务已安装并设为开机启动"
 
-# ===== 预创建 proxy.sh =====
+# ===== 预创建代理环境文件 =====
 echo ""
-echo "预创建 /etc/profile.d/proxy.sh..."
+echo "预创建代理环境文件..."
+
+# /etc/profile.d/proxy.sh — 登录 shell 用 (bash/zsh)
 sudo touch /etc/profile.d/proxy.sh
 sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/profile.d/proxy.sh
 sudo chmod 644 /etc/profile.d/proxy.sh
-echo "  proxy.sh 已创建并授权给 ${CURRENT_USER}"
+echo "  /etc/profile.d/proxy.sh (登录 shell)"
+
+# /etc/auto-mihomo/proxy.env — systemd 服务用 (EnvironmentFile=)
+sudo mkdir -p /etc/auto-mihomo
+sudo touch /etc/auto-mihomo/proxy.env
+sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/auto-mihomo /etc/auto-mihomo/proxy.env
+sudo chmod 644 /etc/auto-mihomo/proxy.env
+echo "  /etc/auto-mihomo/proxy.env (systemd 服务)"
+echo "  已授权给 ${CURRENT_USER}"
 
 # ===== 配置 sudoers =====
 echo ""

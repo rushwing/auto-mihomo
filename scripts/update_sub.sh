@@ -231,6 +231,24 @@ export no_proxy="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 export NO_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 PROXY_EOF
 
+    # 同时写入 systemd 兼容格式 (无 export, 供 EnvironmentFile= 使用)
+    local proxy_env="/etc/auto-mihomo/proxy.env"
+    if [[ -w "$(dirname "$proxy_env")" ]]; then
+        cat > "$proxy_env" <<SYSENV_EOF
+# Auto-Mihomo systemd 代理配置 (自动生成, 请勿手动修改)
+# 用法: 在 systemd service 中添加 EnvironmentFile=/etc/auto-mihomo/proxy.env
+http_proxy=http://127.0.0.1:${MIXED_PORT}
+https_proxy=http://127.0.0.1:${MIXED_PORT}
+all_proxy=socks5://127.0.0.1:${MIXED_PORT}
+HTTP_PROXY=http://127.0.0.1:${MIXED_PORT}
+HTTPS_PROXY=http://127.0.0.1:${MIXED_PORT}
+ALL_PROXY=socks5://127.0.0.1:${MIXED_PORT}
+no_proxy=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+NO_PROXY=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
+SYSENV_EOF
+        log_info "systemd 代理环境文件已写入: ${proxy_env}"
+    fi
+
     log_info "系统代理已设置 (mixed-port: ${MIXED_PORT})"
     log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
 }
