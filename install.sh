@@ -11,7 +11,8 @@
 #      在线下载 Mihomo、GeoIP、uv 和 Python 依赖
 #
 # 用法:
-#   bash install.sh
+#   sudo bash install.sh                    # 服务用户 = 当前用户
+#   sudo bash install.sh --user openclaw    # 指定服务用户
 # =============================================================================
 set -euo pipefail
 
@@ -20,7 +21,31 @@ MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 MIHOMO_HOME="/opt/mihomo"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENDOR_DIR="${PROJECT_DIR}/vendor"
-CURRENT_USER="${SUDO_USER:-$USER}"
+
+# ===== 解析参数 =====
+SERVICE_USER=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --user) SERVICE_USER="$2"; shift 2 ;;
+        -h|--help)
+            echo "用法: sudo bash install.sh [选项]"
+            echo ""
+            echo "选项:"
+            echo "  --user <USERNAME>  指定运行服务的用户 (默认: 当前用户)"
+            echo "  -h, --help         显示帮助"
+            exit 0
+            ;;
+        *) echo "未知参数: $1"; exit 1 ;;
+    esac
+done
+
+CURRENT_USER="${SERVICE_USER:-${SUDO_USER:-$USER}}"
+
+# 验证用户存在
+if ! id "$CURRENT_USER" &>/dev/null; then
+    echo "错误: 用户 '${CURRENT_USER}' 不存在"
+    exit 1
+fi
 
 # 检测是否从部署包安装
 if [[ -d "$VENDOR_DIR" ]]; then
@@ -34,6 +59,7 @@ else
     echo "  Auto-Mihomo 安装 (在线)"
     echo "============================================"
 fi
+echo "  服务用户: ${CURRENT_USER}"
 echo ""
 
 # ===== [1/7] 检测架构 =====
@@ -162,6 +188,14 @@ else
 fi
 echo "  Python 依赖安装完成 (.venv)"
 
+# ===== 设置项目目录权限 =====
+echo ""
+echo "设置目录权限 (用户: ${CURRENT_USER})..."
+chown -R "${CURRENT_USER}:${CURRENT_USER}" "$PROJECT_DIR"
+chown -R "${CURRENT_USER}:${CURRENT_USER}" "$MIHOMO_HOME"
+echo "  ${PROJECT_DIR} → ${CURRENT_USER}"
+echo "  ${MIHOMO_HOME} → ${CURRENT_USER}"
+
 # ===== [7/7] 安装 systemd 服务 =====
 echo "[7/7] 安装 systemd 服务..."
 
@@ -226,21 +260,22 @@ else
     sudo rm -f "$SUDOERS_FILE"
 fi
 
-# ===== 配置定时任务 =====
+# ===== 配置定时任务 (以服务用户身份) =====
 echo ""
-echo "配置定时任务 (每天凌晨 3 点自动更新订阅)..."
+echo "配置定时任务 (每天凌晨 3 点自动更新订阅, 用户: ${CURRENT_USER})..."
 CRON_CMD="0 3 * * * cd ${PROJECT_DIR} && bash ${PROJECT_DIR}/scripts/update_sub.sh >> ${PROJECT_DIR}/cron.log 2>&1"
 
-if crontab -l 2>/dev/null | grep -qF "update_sub.sh"; then
+if sudo -u "$CURRENT_USER" crontab -l 2>/dev/null | grep -qF "update_sub.sh"; then
     echo "  定时任务已存在, 跳过"
 else
-    (crontab -l 2>/dev/null; echo "$CRON_CMD") | crontab -
+    (sudo -u "$CURRENT_USER" crontab -l 2>/dev/null; echo "$CRON_CMD") | sudo -u "$CURRENT_USER" crontab -
     echo "  定时任务已添加"
 fi
 
 # ===== .env 文件 =====
 if [[ ! -f "${PROJECT_DIR}/.env" ]]; then
     cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
+    chown "${CURRENT_USER}:${CURRENT_USER}" "${PROJECT_DIR}/.env"
     echo ""
     echo "已创建 .env 文件, 请编辑填写订阅 URL"
 fi
@@ -251,13 +286,17 @@ echo "============================================"
 echo "  安装完成!"
 echo "============================================"
 echo ""
+echo "  服务用户: ${CURRENT_USER}"
+echo "  项目目录: ${PROJECT_DIR}"
+echo "  Mihomo:   ${MIHOMO_HOME}"
+echo ""
 echo "后续步骤:"
 echo ""
 echo "  1. 编辑 .env 填写 Clash 订阅 URL:"
 echo "     nano ${PROJECT_DIR}/.env"
 echo ""
-echo "  2. 首次运行更新脚本:"
-echo "     bash ${PROJECT_DIR}/scripts/update_sub.sh"
+echo "  2. 首次运行更新脚本 (以 ${CURRENT_USER} 身份):"
+echo "     sudo -u ${CURRENT_USER} bash ${PROJECT_DIR}/scripts/update_sub.sh"
 echo ""
 echo "  3. 启动 MCP 服务:"
 echo "     sudo systemctl start auto-mihomo-mcp"
@@ -269,6 +308,6 @@ echo ""
 echo "  5. 查看 MCP API 文档:"
 echo "     http://<树莓派IP>:8900/docs"
 echo ""
-echo "定时任务: 每天 03:00 自动更新订阅"
+echo "定时任务: 每天 03:00 自动更新订阅 (用户: ${CURRENT_USER})"
 echo "日志文件: ${PROJECT_DIR}/update.log"
 echo "Cron 日志: ${PROJECT_DIR}/cron.log"
