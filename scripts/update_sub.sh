@@ -120,7 +120,9 @@ print(len(d.get('proxies', [])))
 
 # ===== 2. 测试节点延迟 =====
 test_nodes() {
-    log_info "开始并发测试节点延迟 (workers=${MAX_WORKERS}, timeout=${TCP_TIMEOUT}s)..."
+    # 注意: 此函数的 stdout 会被 main() 通过 $() 捕获,
+    # 所有 log 必须重定向到 stderr, 仅 echo 最终结果到 stdout
+    log_info "开始并发测试节点延迟 (workers=${MAX_WORKERS}, timeout=${TCP_TIMEOUT}s)..." >&2
 
     local best_node
     best_node=$(python3 "${SCRIPT_DIR}/test_nodes.py" \
@@ -130,11 +132,11 @@ test_nodes() {
         2> >(tee -a "$LOG_FILE" >&2))
 
     if [[ -z "$best_node" ]]; then
-        log_error "无法确定最快节点"
+        log_error "无法确定最快节点" >&2
         return 1
     fi
 
-    log_info "最快节点: ${best_node}"
+    log_info "最快节点: ${best_node}" >&2
     echo "$best_node"
 }
 
