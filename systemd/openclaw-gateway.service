@@ -1,23 +1,23 @@
 [Unit]
-Description=OpenClaw Gateway (reference - copy and modify as needed)
+Description=OpenClaw Gateway
 After=network-online.target mihomo.service
 Wants=network-online.target
 Requires=mihomo.service
 
 [Service]
 Type=simple
-User=openclaw
-WorkingDirectory=/opt/openclaw
+User=__USER__
+WorkingDirectory=__HOME__/.openclaw
 
 # 从 auto-mihomo 统一管理的代理配置读取 (端口变更自动生效)
 EnvironmentFile=/etc/auto-mihomo/proxy.env
 
 # Node.js 内置 fetch (undici) 不读取 HTTP_PROXY 环境变量,
 # 通过 proxy-bootstrap.js 预加载 undici ProxyAgent (零外部依赖)
-Environment="HOME=/home/openclaw"
-Environment="NODE_OPTIONS=-r /opt/auto-mihomo/scripts/proxy-bootstrap.js"
+Environment="HOME=__HOME__"
+Environment="NODE_OPTIONS=-r __PROJECT_DIR__/scripts/proxy-bootstrap.js"
 
-ExecStart=/home/openclaw/.npm-global/bin/openclaw gateway
+ExecStart=__HOME__/.npm-global/bin/openclaw gateway
 Restart=always
 RestartSec=5
 

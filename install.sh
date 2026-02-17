@@ -11,7 +11,7 @@
 #      在线下载 Mihomo、GeoIP、uv 和 Python 依赖
 #
 # 用法:
-#   sudo bash install.sh                    # 服务用户 = 当前用户
+#   sudo bash install.sh                    # 服务用户 = openclaw
 #   sudo bash install.sh --user openclaw    # 指定服务用户
 # =============================================================================
 set -euo pipefail
@@ -31,7 +31,7 @@ while [[ $# -gt 0 ]]; do
             echo "用法: sudo bash install.sh [选项]"
             echo ""
             echo "选项:"
-            echo "  --user <USERNAME>  指定运行服务的用户 (默认: 当前用户)"
+            echo "  --user <USERNAME>  指定运行服务的用户 (默认: openclaw)"
             echo "  -h, --help         显示帮助"
             exit 0
             ;;
@@ -39,13 +39,15 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-CURRENT_USER="${SERVICE_USER:-${SUDO_USER:-$USER}}"
+CURRENT_USER="${SERVICE_USER:-openclaw}"
 
 # 验证用户存在
 if ! id "$CURRENT_USER" &>/dev/null; then
     echo "错误: 用户 '${CURRENT_USER}' 不存在"
     exit 1
 fi
+
+USER_HOME=$(getent passwd "$CURRENT_USER" | cut -d: -f6)
 
 # 检测是否从部署包安装
 if [[ -d "$VENDOR_DIR" ]]; then
@@ -219,9 +221,28 @@ sed \
     "${PROJECT_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
+# 处理 openclaw-gateway.service (仅当 openclaw 二进制存在时安装)
+OPENCLAW_BIN="${USER_HOME}/.npm-global/bin/openclaw"
+if [[ -x "$OPENCLAW_BIN" ]]; then
+    echo "  检测到 openclaw 二进制: ${OPENCLAW_BIN}"
+    sed \
+        -e "s|__USER__|${CURRENT_USER}|g" \
+        -e "s|__HOME__|${USER_HOME}|g" \
+        -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
+        "${PROJECT_DIR}/systemd/openclaw-gateway.service" \
+        | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
+    INSTALL_OPENCLAW_GW=true
+else
+    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_BIN})"
+    INSTALL_OPENCLAW_GW=false
+fi
+
 sudo systemctl daemon-reload
 sudo systemctl enable mihomo
 sudo systemctl enable auto-mihomo-mcp
+if [[ "$INSTALL_OPENCLAW_GW" == "true" ]]; then
+    sudo systemctl enable openclaw-gateway
+fi
 echo "  systemd 服务已安装并设为开机启动"
 
 # ===== 预创建代理环境文件 =====
