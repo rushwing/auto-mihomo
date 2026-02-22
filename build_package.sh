@@ -23,7 +23,7 @@ set -euo pipefail
 
 # ===== 默认配置 =====
 TARGET_ARCH="arm64"
-MIHOMO_VERSION="v1.19.0"
+MIHOMO_VERSION="v1.19.20"
 PYTHON_VERSION="3.13"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
