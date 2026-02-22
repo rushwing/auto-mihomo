@@ -38,13 +38,22 @@ API_SECRET="${MIHOMO_API_SECRET:-}"
 PROXY_MODE="${AUTO_MIHOMO_PROXY_MODE:-process-proxy}"
 HTTP_PROBE_URL="${MIHOMO_HTTP_PROBE_URL:-http://www.gstatic.com/generate_204}"
 HTTP_PROBE_TIMEOUT="${MIHOMO_HTTP_PROBE_TIMEOUT:-12}"
+MIHOMO_TEST_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
+MIHOMO_PROBE_TOP_N="${MIHOMO_PROBE_TOP_N:-10}"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
 CONFIG_FILE="${PROJECT_DIR}/config.yaml"
 LOG_FILE="${PROJECT_DIR}/update.log"
 
 SKIP_PROXY=false
-[[ "${1:-}" == "--skip-proxy" ]] && SKIP_PROXY=true
+# PROBE_STRATEGY: first-success = stop at first passing node (fast, for startup/restart)
+#                 best          = probe all candidates, pick lowest HTTP latency (for cron)
+PROBE_STRATEGY="first-success"
+for _arg in "$@"; do
+    [[ "$_arg" == "--skip-proxy" ]]          && SKIP_PROXY=true
+    [[ "$_arg" == "--probe-strategy=best" ]] && PROBE_STRATEGY="best"
+done
+unset _arg
 
 # ===== 日志 =====
 log() {
@@ -231,8 +240,21 @@ reload_mihomo() {
     fi
 }
 
-# ===== 5. 通过 Mihomo 实际 HTTP 探测选择节点 =====
+# ===== 5a. TCP 并发预筛选 — 返回延迟最低的前 N 个节点名称 =====
+tcp_prefilter_nodes() {
+    log_info "TCP 预筛选节点 (workers=${MIHOMO_TEST_WORKERS}, top=${MIHOMO_PROBE_TOP_N})..."
+    python3 "${SCRIPT_DIR}/test_nodes.py" \
+        --subscription "$SUB_FILE" \
+        --workers "$MIHOMO_TEST_WORKERS" \
+        --top-n "$MIHOMO_PROBE_TOP_N" \
+        --timeout 3
+}
+
+# ===== 5b. 通过 Mihomo 实际 HTTP 探测选择节点 =====
+# 参数 $1 (可选): 换行分隔的候选节点名称; 为空则探测订阅中所有节点
 probe_and_select_best_node() {
+    local node_shortlist="${1:-}"
+
     # 仅在 process-proxy 模式下使用本机 mixed-port 做服务级探测
     if [[ "$PROXY_MODE" != "process-proxy" ]]; then
         log_warn "当前模式为 ${PROXY_MODE}; 跳过 process-proxy HTTP 探测选节点"
@@ -246,7 +268,13 @@ probe_and_select_best_node() {
     total=0
     tested=0
 
-    log_info "开始实际 HTTP 探测选节点 (url=${HTTP_PROBE_URL}, timeout=${HTTP_PROBE_TIMEOUT}s)..."
+    if [[ -n "$node_shortlist" ]]; then
+        local count
+        count=$(printf '%s\n' "$node_shortlist" | grep -c '.' || true)
+        log_info "开始 HTTP 探测候选节点 ${count} 个 (策略=${PROBE_STRATEGY}, url=${HTTP_PROBE_URL}, timeout=${HTTP_PROBE_TIMEOUT}s)..."
+    else
+        log_info "开始 HTTP 探测所有节点 (策略=${PROBE_STRATEGY}, url=${HTTP_PROBE_URL}, timeout=${HTTP_PROBE_TIMEOUT}s)..."
+    fi
 
     while IFS= read -r node; do
         [[ -z "$node" ]] && continue
@@ -288,17 +316,31 @@ probe_and_select_best_node() {
         tested=$((tested + 1))
         log_info "HTTP 探测: ${node} -> ${latency_ms}ms"
 
-        if (( latency_ms < best_ms )); then
-            best_ms=$latency_ms
+        if [[ "$PROBE_STRATEGY" == "first-success" ]]; then
+            # 启动/重启: 候选已按 TCP 延迟排序，第一个通过即最佳，立即返回
             best_node="$node"
+            best_ms=$latency_ms
+            break
+        else
+            # 定时任务: 探测全部候选，选 HTTP 延迟最低的
+            if (( latency_ms < best_ms )); then
+                best_ms=$latency_ms
+                best_node="$node"
+            fi
         fi
-    done < <(python3 -c "
+    done < <(
+        if [[ -n "$node_shortlist" ]]; then
+            printf '%s\n' "$node_shortlist"
+        else
+            python3 -c "
 import yaml
 with open('${SUB_FILE}', encoding='utf-8') as f:
     d = yaml.safe_load(f) or {}
 for p in d.get('proxies', []) or []:
     print(p.get('name', ''))
-")
+"
+        fi
+    )
 
     if [[ -z "$best_node" ]]; then
         log_warn "HTTP 探测未选出可用节点 (总节点=${total}, 成功=${tested})"
@@ -408,9 +450,21 @@ main() {
     # Step 4: 重载 Mihomo
     reload_mihomo || { log_error "重载 Mihomo 失败, 中止"; exit 1; }
 
-    # Step 5: 通过 Mihomo 实际 HTTP 探测重新选优
+    # Step 5: TCP 并发预筛选 + HTTP 探测重新选优
+    local tcp_shortlist=""
+    if [[ "$PROXY_MODE" == "process-proxy" ]]; then
+        tcp_shortlist=$(tcp_prefilter_nodes) || true
+        if [[ -n "$tcp_shortlist" ]]; then
+            local shortlist_count
+            shortlist_count=$(printf '%s\n' "$tcp_shortlist" | grep -c '.' || true)
+            log_info "TCP 预筛选完成，候选节点: ${shortlist_count} 个"
+        else
+            log_warn "TCP 预筛选无结果，HTTP 探测将覆盖所有节点"
+        fi
+    fi
+
     local probed_best_node=""
-    probed_best_node=$(probe_and_select_best_node) || true
+    probed_best_node=$(probe_and_select_best_node "$tcp_shortlist") || true
     if [[ -n "$probed_best_node" && "$probed_best_node" != "$best_node" ]]; then
         log_info "应用 HTTP 探测结果并重载配置: ${best_node} -> ${probed_best_node}"
         generate_config "$probed_best_node" || { log_error "重新生成配置失败, 中止"; exit 1; }

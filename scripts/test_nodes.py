@@ -59,6 +59,9 @@ def main():
     parser.add_argument(
         "--timeout", type=int, default=3, help="TCP 连接超时秒数 (默认: 3)"
     )
+    parser.add_argument(
+        "--top-n", type=int, default=1, help="输出延迟最低的前 N 个节点名称 (默认: 1)"
+    )
     args = parser.parse_args()
 
     # 读取订阅文件
@@ -98,16 +101,18 @@ def main():
         status = f"{latency}ms" if ok else "超时"
         print(f"{i:<4} {name:<40} {addr:<30} {status:<8}", file=sys.stderr)
 
-    # 返回最快节点
-    best_name, _, best_latency, best_ok = results[0]
-    if not best_ok:
+    # 返回最快的 top-n 个节点
+    top = [r for r in results if r[3] == 1][: args.top_n]
+    if not top:
         print("\n错误: 所有节点均不可达", file=sys.stderr)
         sys.exit(1)
 
+    best_name, _, best_latency, _ = top[0]
     print(f"\n最快节点: {best_name} ({best_latency}ms)", file=sys.stderr)
 
-    # 仅向 stdout 输出节点名称, 供 bash 脚本捕获
-    print(best_name)
+    # 仅向 stdout 输出节点名称 (每行一个), 供 bash 脚本捕获
+    for name, _, _, _ in top:
+        print(name)
 
 
 if __name__ == "__main__":

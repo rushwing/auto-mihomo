@@ -15,7 +15,7 @@ fi
 cd "$PROJECT_DIR"
 
 echo "[$(date '+%Y-%m-%d %H:%M:%S')] begin noon update" >> "$LOG_FILE"
-if bash "${PROJECT_DIR}/scripts/update_sub.sh" >> "$LOG_FILE" 2>&1; then
+if bash "${PROJECT_DIR}/scripts/update_sub.sh" --probe-strategy=best >> "$LOG_FILE" 2>&1; then
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] success" >> "$LOG_FILE"
 else
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] failed" >> "$LOG_FILE"

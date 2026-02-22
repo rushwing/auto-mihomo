@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-OPENCLAW_BIN="${OPENCLAW_BIN:-$HOME/.npm-global/bin/openclaw}"
+OPENCLAW_NJS="${OPENCLAW_NJS:-$HOME/.openclaw/openclaw.njs}"
 LOG_FILE="${PROJECT_DIR}/openclaw-startup.log"
 
 log() {
@@ -27,4 +27,4 @@ if [[ -f /etc/profile.d/proxy.sh ]]; then
 fi
 
 log "startup: exec openclaw gateway"
-exec "$OPENCLAW_BIN" gateway
+exec node "$OPENCLAW_NJS" gateway
