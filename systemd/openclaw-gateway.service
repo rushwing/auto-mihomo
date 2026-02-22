@@ -1,8 +1,7 @@
 [Unit]
 Description=OpenClaw Gateway
 After=network-online.target mihomo.service
-Wants=network-online.target
-Requires=mihomo.service
+Wants=network-online.target mihomo.service
 
 [Service]
 Type=simple

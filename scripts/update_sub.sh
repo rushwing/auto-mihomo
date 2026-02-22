@@ -187,7 +187,7 @@ reload_mihomo() {
     if mihomo_curl -s --max-time 3 "${api_url}/version" &>/dev/null; then
         local http_code
         http_code=$(mihomo_curl -s -o /dev/null -w '%{http_code}' \
-            -X PUT "${api_url}/configs" \
+            -X PUT "${api_url}/configs?force=true" \
             -H "Content-Type: application/json" \
             -d "{\"path\": \"${CONFIG_FILE}\"}" \
             --max-time 10)

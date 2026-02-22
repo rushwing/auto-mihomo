@@ -41,6 +41,32 @@ done
 
 CURRENT_USER="${SERVICE_USER:-openclaw}"
 
+# ===== 检测已有安装 → 引导至 upgrade.sh =====
+# 从已安装的 systemd 服务文件推断安装目录
+_existing_install=""
+if [[ -f /etc/systemd/system/auto-mihomo-mcp.service ]]; then
+    _existing_install=$(grep -m1 '^WorkingDirectory=' /etc/systemd/system/auto-mihomo-mcp.service \
+        | cut -d= -f2- | xargs 2>/dev/null || true)
+fi
+# 若推断路径存在且不是当前目录本身, 则视为已有安装
+if [[ -n "$_existing_install" && -d "$_existing_install" && "$_existing_install" != "$PROJECT_DIR" ]]; then
+    echo ""
+    echo "  检测到已有安装: ${_existing_install}"
+    echo "  当前版本: $(head -1 "${_existing_install}/version.txt" 2>/dev/null || echo '未知')"
+    echo "  新版本:   $(head -1 "${PROJECT_DIR}/version.txt" 2>/dev/null || echo '未知')"
+    echo ""
+    echo "  提示: 升级现有安装请使用 upgrade.sh, 它会自动迁移 .env 并重启服务。"
+    echo ""
+    printf "  继续执行 install.sh (全新安装/覆盖) 还是切换到 upgrade.sh? [I=install / U=upgrade (默认: U)]: "
+    read -r _ans </dev/tty
+    _ans="${_ans:-U}"
+    if [[ "$_ans" =~ ^[Uu] ]]; then
+        exec bash "${PROJECT_DIR}/upgrade.sh" ${SERVICE_USER:+--install-dir "$_existing_install"}
+    fi
+    echo ""
+fi
+unset _existing_install _ans
+
 # 验证用户存在
 if ! id "$CURRENT_USER" &>/dev/null; then
     echo "错误: 用户 '${CURRENT_USER}' 不存在"
@@ -224,10 +250,10 @@ sed \
     "${PROJECT_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
-# 处理 openclaw-gateway.service (仅当 openclaw 二进制存在时安装)
-OPENCLAW_BIN="${USER_HOME}/.npm-global/bin/openclaw"
-if [[ -x "$OPENCLAW_BIN" ]]; then
-    echo "  检测到 openclaw 二进制: ${OPENCLAW_BIN}"
+# 处理 openclaw-gateway.service (仅当 openclaw.njs 存在时安装)
+OPENCLAW_NJS="${USER_HOME}/.openclaw/openclaw.njs"
+if [[ -f "$OPENCLAW_NJS" ]]; then
+    echo "  检测到 openclaw: ${OPENCLAW_NJS}"
     sed \
         -e "s|__USER__|${CURRENT_USER}|g" \
         -e "s|__HOME__|${USER_HOME}|g" \
