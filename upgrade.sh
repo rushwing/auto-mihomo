@@ -434,10 +434,27 @@ install_systemd_services() {
     # openclaw-gateway.service (仅当 openclaw.mjs 存在时)
     local openclaw_mjs="${user_home}/.openclaw/openclaw.mjs"
     if [[ -f "$openclaw_mjs" ]]; then
+        # 解析 Node.js 可执行文件路径 (systemd PATH 中没有 nvm bin dir)
+        local _node_bin=""
+        if [[ -d "${user_home}/.nvm/versions/node" ]]; then
+            _node_bin=$(find "${user_home}/.nvm/versions/node" -maxdepth 3 -name node -type f 2>/dev/null \
+                | sort -rV | head -1)
+        fi
+        [[ -z "$_node_bin" ]] && _node_bin=$(command -v node 2>/dev/null || true)
+        if [[ -z "$_node_bin" ]]; then
+            for _p in /usr/local/bin/node /usr/bin/node; do
+                [[ -x "$_p" ]] && _node_bin="$_p" && break
+            done
+        fi
+        local node_dir; node_dir=$(dirname "${_node_bin:-/usr/bin/node}")
+        info "Node.js: ${_node_bin:-未找到} → PATH 注入: ${node_dir}"
+        unset _node_bin _p
+
         sed \
             -e "s|__USER__|${svc_user}|g" \
             -e "s|__HOME__|${user_home}|g" \
             -e "s|__PROJECT_DIR__|${install_dir}|g" \
+            -e "s|__NODE_DIR__|${node_dir}|g" \
             "${install_dir}/systemd/openclaw-gateway.service" \
             | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
         ok "openclaw-gateway.service"

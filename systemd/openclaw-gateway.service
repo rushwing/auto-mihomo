@@ -14,6 +14,7 @@ EnvironmentFile=/etc/auto-mihomo/proxy.env
 # Node.js 内置 fetch (undici) 不读取 HTTP_PROXY 环境变量,
 # 通过 proxy-bootstrap.cjs 预加载 undici ProxyAgent (零外部依赖)
 Environment="HOME=__HOME__"
+Environment="PATH=__NODE_DIR__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 Environment="NODE_OPTIONS=-r __PROJECT_DIR__/scripts/proxy-bootstrap.cjs"
 
 ExecStart=__PROJECT_DIR__/scripts/start_openclaw_with_proxy.sh

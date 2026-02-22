@@ -272,10 +272,31 @@ sed \
 OPENCLAW_MJS="${USER_HOME}/.openclaw/openclaw.mjs"
 if [[ -f "$OPENCLAW_MJS" ]]; then
     echo "  检测到 openclaw: ${OPENCLAW_MJS}"
+
+    # 解析 Node.js 可执行文件路径, 优先使用 nvm (systemd PATH 中没有 nvm bin dir)
+    _node_bin=""
+    # 1. nvm: 扫描最新版本
+    if [[ -d "${USER_HOME}/.nvm/versions/node" ]]; then
+        _node_bin=$(find "${USER_HOME}/.nvm/versions/node" -maxdepth 3 -name node -type f 2>/dev/null \
+            | sort -rV | head -1)
+    fi
+    # 2. 当前 PATH (SSH 会话下可能已有)
+    [[ -z "$_node_bin" ]] && _node_bin=$(command -v node 2>/dev/null || true)
+    # 3. 常见系统路径
+    if [[ -z "$_node_bin" ]]; then
+        for _p in /usr/local/bin/node /usr/bin/node; do
+            [[ -x "$_p" ]] && _node_bin="$_p" && break
+        done
+    fi
+    NODE_DIR=$(dirname "${_node_bin:-/usr/bin/node}")
+    echo "  Node.js: ${_node_bin:-未找到, 使用默认路径} → PATH 注入: ${NODE_DIR}"
+    unset _node_bin _p
+
     sed \
         -e "s|__USER__|${CURRENT_USER}|g" \
         -e "s|__HOME__|${USER_HOME}|g" \
         -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
+        -e "s|__NODE_DIR__|${NODE_DIR}|g" \
         "${INSTALL_DIR}/systemd/openclaw-gateway.service" \
         | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
     INSTALL_OPENCLAW_GW=true

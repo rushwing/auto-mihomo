@@ -37,4 +37,30 @@ if [[ -f /etc/profile.d/proxy.sh ]]; then
 fi
 
 log "startup: exec openclaw gateway"
-exec node "$OPENCLAW_MJS" gateway
+
+# Resolve the node binary: systemd PATH may not include nvm's bin dir.
+# install.sh injects the correct PATH via Environment=; this fallback
+# handles manual invocations or installs that pre-date the PATH injection.
+_find_node() {
+    # 1. Already on PATH (covers services with proper Environment=PATH and SSH sessions)
+    if command -v node &>/dev/null; then
+        command -v node; return 0
+    fi
+    # 2. nvm: scan for the newest installed version
+    if [[ -d "$HOME/.nvm/versions/node" ]]; then
+        local p
+        p=$(find "$HOME/.nvm/versions/node" -maxdepth 3 -name node -type f 2>/dev/null \
+            | sort -rV | head -1)
+        [[ -n "$p" ]] && echo "$p" && return 0
+    fi
+    # 3. Common static paths
+    local s
+    for s in /usr/local/bin/node /usr/bin/node; do
+        [[ -x "$s" ]] && echo "$s" && return 0
+    done
+    return 1
+}
+
+NODE_BIN=$(_find_node) || { log "startup: ERROR: node not found in PATH or ~/.nvm"; exit 1; }
+log "startup: node → ${NODE_BIN}"
+exec "$NODE_BIN" "$OPENCLAW_MJS" gateway
