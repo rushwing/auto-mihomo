@@ -310,8 +310,8 @@ sudo chmod 644 /etc/auto-mihomo/proxy.env
 echo "  /etc/auto-mihomo/proxy.env (systemd 服务)"
 echo "  已授权给 ${CURRENT_USER}"
 
-# 兼容旧排障路径: 项目目录中的 config.yaml 指向 Mihomo workdir 配置
-ln -sfn "${MIHOMO_HOME}/config.yaml" "${PROJECT_DIR}/config.yaml" 2>/dev/null || true
+# 兼容旧排障路径: 安装目录中的 config.yaml 指向 Mihomo workdir 配置
+ln -sfn "${MIHOMO_HOME}/config.yaml" "${INSTALL_DIR}/config.yaml" 2>/dev/null || true
 
 # ===== 配置 sudoers =====
 echo ""
