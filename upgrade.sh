@@ -431,9 +431,9 @@ install_systemd_services() {
         | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
     ok "auto-mihomo-mcp.service"
 
-    # openclaw-gateway.service (仅当 openclaw.njs 存在时)
-    local openclaw_njs="${user_home}/.openclaw/openclaw.njs"
-    if [[ -f "$openclaw_njs" ]]; then
+    # openclaw-gateway.service (仅当 openclaw.mjs 存在时)
+    local openclaw_mjs="${user_home}/.openclaw/openclaw.mjs"
+    if [[ -f "$openclaw_mjs" ]]; then
         sed \
             -e "s|__USER__|${svc_user}|g" \
             -e "s|__HOME__|${user_home}|g" \

@@ -268,10 +268,10 @@ sed \
     "${INSTALL_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
-# 处理 openclaw-gateway.service (仅当 openclaw.njs 存在时安装)
-OPENCLAW_NJS="${USER_HOME}/.openclaw/openclaw.njs"
-if [[ -f "$OPENCLAW_NJS" ]]; then
-    echo "  检测到 openclaw: ${OPENCLAW_NJS}"
+# 处理 openclaw-gateway.service (仅当 openclaw.mjs 存在时安装)
+OPENCLAW_MJS="${USER_HOME}/.openclaw/openclaw.mjs"
+if [[ -f "$OPENCLAW_MJS" ]]; then
+    echo "  检测到 openclaw: ${OPENCLAW_MJS}"
     sed \
         -e "s|__USER__|${CURRENT_USER}|g" \
         -e "s|__HOME__|${USER_HOME}|g" \
@@ -280,7 +280,7 @@ if [[ -f "$OPENCLAW_NJS" ]]; then
         | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
     INSTALL_OPENCLAW_GW=true
 else
-    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_NJS})"
+    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_MJS})"
     INSTALL_OPENCLAW_GW=false
 fi
 
