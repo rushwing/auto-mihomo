@@ -96,7 +96,11 @@ info "开始部署后自检 (project=${PROJECT_DIR})"
 info "1) 检查关键服务"
 check_service_active "mihomo"
 check_service_active "auto-mihomo-mcp"
-check_service_active "openclaw-gateway"
+if [[ -f /etc/systemd/system/openclaw-gateway.service ]]; then
+    check_service_active "openclaw-gateway"
+else
+    info "openclaw-gateway: 未安装, 跳过"
+fi
 
 info "2) 检查本地监听接口"
 MIHOMO_HEADERS=()
@@ -118,7 +122,9 @@ check_proxy_target "GitHub" "https://github.com" "常见 200/301/302"
 check_proxy_target "Telegram API" "https://api.telegram.org" "常见 200/302/401/404"
 
 info "4) 检查 OpenClaw 预加载代理日志 (最近 50 行)"
-if journalctl -u openclaw-gateway -n 50 --no-pager 2>/dev/null | grep -q "\[proxy-bootstrap\] patched"; then
+if [[ ! -f /etc/systemd/system/openclaw-gateway.service ]]; then
+    info "openclaw-gateway 未安装, 跳过日志检查"
+elif journalctl -u openclaw-gateway -n 50 --no-pager 2>/dev/null | grep -q "\[proxy-bootstrap\] patched"; then
     pass "OpenClaw 已加载 proxy-bootstrap.cjs"
 else
     warn "未在 openclaw-gateway 最近日志中看到 proxy-bootstrap patched 日志（可能日志已滚动或启动较早）"

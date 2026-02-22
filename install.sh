@@ -19,8 +19,9 @@ set -euo pipefail
 # ===== 配置 =====
 MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
 MIHOMO_HOME="/opt/mihomo"
-PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENDOR_DIR="${PROJECT_DIR}/vendor"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+INSTALL_DIR="/opt/auto-mihomo"
+VENDOR_DIR="${SCRIPT_DIR}/vendor"
 
 # ===== 解析参数 =====
 SERVICE_USER=""
@@ -48,12 +49,12 @@ if [[ -f /etc/systemd/system/auto-mihomo-mcp.service ]]; then
     _existing_install=$(grep -m1 '^WorkingDirectory=' /etc/systemd/system/auto-mihomo-mcp.service \
         | cut -d= -f2- | xargs 2>/dev/null || true)
 fi
-# 若推断路径存在且不是当前目录本身, 则视为已有安装
-if [[ -n "$_existing_install" && -d "$_existing_install" && "$_existing_install" != "$PROJECT_DIR" ]]; then
+# 若推断路径存在且不是固定安装目录本身, 则视为已有安装
+if [[ -n "$_existing_install" && -d "$_existing_install" && "$_existing_install" != "$INSTALL_DIR" ]]; then
     echo ""
     echo "  检测到已有安装: ${_existing_install}"
     echo "  当前版本: $(head -1 "${_existing_install}/version.txt" 2>/dev/null || echo '未知')"
-    echo "  新版本:   $(head -1 "${PROJECT_DIR}/version.txt" 2>/dev/null || echo '未知')"
+    echo "  新版本:   $(head -1 "${SCRIPT_DIR}/version.txt" 2>/dev/null || echo '未知')"
     echo ""
     echo "  提示: 升级现有安装请使用 upgrade.sh, 它会自动迁移 .env 并重启服务。"
     echo ""
@@ -61,7 +62,7 @@ if [[ -n "$_existing_install" && -d "$_existing_install" && "$_existing_install"
     read -r _ans </dev/tty
     _ans="${_ans:-U}"
     if [[ "$_ans" =~ ^[Uu] ]]; then
-        exec bash "${PROJECT_DIR}/upgrade.sh" ${SERVICE_USER:+--install-dir "$_existing_install"}
+        exec bash "${SCRIPT_DIR}/upgrade.sh" ${SERVICE_USER:+--install-dir "$_existing_install"}
     fi
     echo ""
 fi
@@ -89,6 +90,23 @@ else
 fi
 echo "  服务用户: ${CURRENT_USER}"
 echo ""
+
+# ===== [0/7] 部署项目文件 =====
+echo "[0/7] 部署项目文件到 ${INSTALL_DIR}..."
+mkdir -p "$INSTALL_DIR"
+rsync -a \
+    --exclude='.env' \
+    --exclude='subscription.yaml' \
+    --exclude='config.yaml' \
+    --exclude='*.log' \
+    --exclude='.venv/' \
+    --exclude='vendor/' \
+    --exclude='__pycache__/' \
+    --exclude='*.pyc' \
+    --exclude='dist/' \
+    "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
+chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+echo "  完成"
 
 # ===== [1/7] 检测架构 =====
 ARCH=$(uname -m)
@@ -198,7 +216,7 @@ echo "  完成"
 
 # ===== [6/7] Python 虚拟环境 =====
 echo "[6/7] 创建 Python 虚拟环境并安装依赖..."
-cd "$PROJECT_DIR"
+cd "$INSTALL_DIR"
 
 if [[ "$OFFLINE" == "true" && -d "${VENDOR_DIR}/wheels" ]]; then
     WHEEL_COUNT=$(find "${VENDOR_DIR}/wheels" -name '*.whl' 2>/dev/null | wc -l | tr -d ' ')
@@ -217,21 +235,21 @@ fi
 echo "  Python 依赖安装完成 (.venv)"
 
 # ===== 确保脚本可执行 =====
-chmod +x "${PROJECT_DIR}/scripts/"*.sh 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
 
 # ===== 设置项目目录权限 =====
 echo ""
 echo "设置目录权限 (用户: ${CURRENT_USER})..."
-chown -R "${CURRENT_USER}:${CURRENT_USER}" "$PROJECT_DIR"
+chown -R "${CURRENT_USER}:${CURRENT_USER}" "$INSTALL_DIR"
 chown -R "${CURRENT_USER}:${CURRENT_USER}" "$MIHOMO_HOME"
-echo "  ${PROJECT_DIR} → ${CURRENT_USER}"
+echo "  ${INSTALL_DIR} → ${CURRENT_USER}"
 echo "  ${MIHOMO_HOME} → ${CURRENT_USER}"
 
 # ===== [7/7] 安装 systemd 服务 =====
 echo "[7/7] 安装 systemd 服务..."
 
 MIHOMO_BIN="${MIHOMO_HOME}/mihomo"
-CONFIG_FILE="${PROJECT_DIR}/config.yaml"
+CONFIG_FILE="${INSTALL_DIR}/config.yaml"
 
 # 处理 mihomo.service
 sed \
@@ -239,15 +257,15 @@ sed \
     -e "s|__MIHOMO_BIN__|${MIHOMO_BIN}|g" \
     -e "s|__MIHOMO_HOME__|${MIHOMO_HOME}|g" \
     -e "s|__CONFIG_FILE__|${CONFIG_FILE}|g" \
-    -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
-    "${PROJECT_DIR}/systemd/mihomo.service" \
+    -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
+    "${INSTALL_DIR}/systemd/mihomo.service" \
     | sudo tee /etc/systemd/system/mihomo.service > /dev/null
 
 # 处理 auto-mihomo-mcp.service
 sed \
     -e "s|__USER__|${CURRENT_USER}|g" \
-    -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
-    "${PROJECT_DIR}/systemd/auto-mihomo-mcp.service" \
+    -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
+    "${INSTALL_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
 # 处理 openclaw-gateway.service (仅当 openclaw.njs 存在时安装)
@@ -257,12 +275,12 @@ if [[ -f "$OPENCLAW_NJS" ]]; then
     sed \
         -e "s|__USER__|${CURRENT_USER}|g" \
         -e "s|__HOME__|${USER_HOME}|g" \
-        -e "s|__PROJECT_DIR__|${PROJECT_DIR}|g" \
-        "${PROJECT_DIR}/systemd/openclaw-gateway.service" \
+        -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
+        "${INSTALL_DIR}/systemd/openclaw-gateway.service" \
         | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
     INSTALL_OPENCLAW_GW=true
 else
-    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_BIN})"
+    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_NJS})"
     INSTALL_OPENCLAW_GW=false
 fi
 
@@ -314,14 +332,14 @@ fi
 echo ""
 echo "配置定时任务 (北京时间每天 12:00 自动更新订阅, 用户: ${CURRENT_USER})..."
 CRON_TZ_LINE="CRON_TZ=Asia/Shanghai"
-CRON_CMD="0 12 * * * ${PROJECT_DIR}/scripts/cron_update_proxy.sh"
+CRON_CMD="0 12 * * * ${INSTALL_DIR}/scripts/cron_update_proxy.sh"
 
 CURRENT_CRONTAB="$(sudo -u "$CURRENT_USER" crontab -l 2>/dev/null || true)"
 
 # 清理旧版本默认任务，避免重复执行 (每日 03:00 update_sub.sh)
-CURRENT_CRONTAB="$(printf '%s\n' "$CURRENT_CRONTAB" | grep -vF "${PROJECT_DIR}/scripts/update_sub.sh >> ${PROJECT_DIR}/cron.log 2>&1" || true)"
+CURRENT_CRONTAB="$(printf '%s\n' "$CURRENT_CRONTAB" | grep -vF "${INSTALL_DIR}/scripts/update_sub.sh >> ${INSTALL_DIR}/cron.log 2>&1" || true)"
 
-if printf '%s\n' "$CURRENT_CRONTAB" | grep -qF "${PROJECT_DIR}/scripts/cron_update_proxy.sh"; then
+if printf '%s\n' "$CURRENT_CRONTAB" | grep -qF "${INSTALL_DIR}/scripts/cron_update_proxy.sh"; then
     echo "  定时任务已存在, 跳过"
 else
     {
@@ -339,9 +357,9 @@ else
 fi
 
 # ===== .env 文件 =====
-if [[ ! -f "${PROJECT_DIR}/.env" ]]; then
-    cp "${PROJECT_DIR}/.env.example" "${PROJECT_DIR}/.env"
-    chown "${CURRENT_USER}:${CURRENT_USER}" "${PROJECT_DIR}/.env"
+if [[ ! -f "${INSTALL_DIR}/.env" ]]; then
+    cp "${INSTALL_DIR}/.env.example" "${INSTALL_DIR}/.env"
+    chown "${CURRENT_USER}:${CURRENT_USER}" "${INSTALL_DIR}/.env"
     echo ""
     echo "已创建 .env 文件, 请编辑填写订阅 URL"
 fi
@@ -353,16 +371,16 @@ echo "  安装完成!"
 echo "============================================"
 echo ""
 echo "  服务用户: ${CURRENT_USER}"
-echo "  项目目录: ${PROJECT_DIR}"
+echo "  项目目录: ${INSTALL_DIR}"
 echo "  Mihomo:   ${MIHOMO_HOME}"
 echo ""
 echo "后续步骤:"
 echo ""
 echo "  1. 编辑 .env 填写 Clash 订阅 URL:"
-echo "     nano ${PROJECT_DIR}/.env"
+echo "     nano ${INSTALL_DIR}/.env"
 echo ""
 echo "  2. 首次运行更新脚本 (以 ${CURRENT_USER} 身份):"
-echo "     sudo -u ${CURRENT_USER} bash ${PROJECT_DIR}/scripts/update_sub.sh"
+echo "     sudo -u ${CURRENT_USER} bash ${INSTALL_DIR}/scripts/update_sub.sh"
 echo ""
 echo "  3. 启动 MCP 服务:"
 echo "     sudo systemctl start auto-mihomo-mcp"
@@ -375,11 +393,11 @@ echo "  5. 查看 MCP API 文档:"
 echo "     http://<树莓派IP>:8900/docs"
 echo ""
 echo "定时任务: 北京时间每天 12:00 自动更新订阅 (用户: ${CURRENT_USER})"
-echo "日志文件: ${PROJECT_DIR}/update.log"
-echo "Cron 日志: ${PROJECT_DIR}/cron-noon-update.log"
+echo "日志文件: ${INSTALL_DIR}/update.log"
+echo "Cron 日志: ${INSTALL_DIR}/cron-noon-update.log"
 echo ""
 echo "常用维护命令:"
-echo "  自检:       bash ${PROJECT_DIR}/scripts/post_deploy_self_check.sh"
-echo "  生成密钥:   bash ${PROJECT_DIR}/scripts/generate_secrets.sh --write-env"
-echo "  同步1Password: bash ${PROJECT_DIR}/scripts/sync_secrets_to_1password.sh --vault auto-mihomo --item <ITEM>"
-echo "  一键轮换:   bash ${PROJECT_DIR}/scripts/rotate_secrets_and_restart.sh --vault auto-mihomo --item <ITEM>"
+echo "  自检:       bash ${INSTALL_DIR}/scripts/post_deploy_self_check.sh"
+echo "  生成密钥:   bash ${INSTALL_DIR}/scripts/generate_secrets.sh --write-env"
+echo "  同步1Password: bash ${INSTALL_DIR}/scripts/sync_secrets_to_1password.sh --vault auto-mihomo --item <ITEM>"
+echo "  一键轮换:   bash ${INSTALL_DIR}/scripts/rotate_secrets_and_restart.sh --vault auto-mihomo --item <ITEM>"

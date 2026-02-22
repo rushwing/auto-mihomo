@@ -118,6 +118,23 @@ source /etc/profile.d/proxy.sh
 bash /opt/auto-mihomo/scripts/post_deploy_self_check.sh
 ```
 
+## Deployment Paths
+
+### Standard production layout
+
+| Path | Purpose |
+|---|---|
+| `/opt/auto-mihomo/` | auto-mihomo install directory (scripts, config, logs, `.venv`) |
+| `/opt/mihomo/` | Mihomo binary and GeoIP data |
+| `/home/<user>/.openclaw/` | OpenClaw user directory (detection trigger: `openclaw.njs`) |
+
+`install.sh` always deploys the project to `/opt/auto-mihomo/` regardless of where the script is run from. The script directory is only used as the source for the rsync copy.
+
+- **Development / testing** — run `sudo bash install.sh` from any directory (e.g. after unpacking to `/tmp/auto-mihomo-v1.2/`); files land at `/opt/auto-mihomo/`.
+- **Production** — the running installation is always at the fixed path `/opt/auto-mihomo/`, so service files, cron jobs, and log paths are stable and predictable.
+
+> `upgrade.sh` works the same way: unpack the new package anywhere, run `sudo bash upgrade.sh` from that directory, and it deploys into the existing `/opt/auto-mihomo/` (detected via the systemd `WorkingDirectory=` field).
+
 ## Project Structure
 
 ```
@@ -337,6 +354,22 @@ A systemd unit for OpenClaw gateway is included at `systemd/openclaw-gateway.ser
 
 The service uses a wrapper (`scripts/start_openclaw_with_proxy.sh`) that runs `scripts/update_sub.sh` first, then starts `openclaw gateway`. It injects `http_proxy`, `https_proxy`, `GLOBAL_AGENT_HTTP_PROXY`, etc. into the OpenClaw gateway process and preloads `scripts/proxy-bootstrap.cjs` to patch Node/undici `fetch()`.
 
+**Source install vs binary install**
+
+The default configuration assumes a **source-installed** OpenClaw where the main entry point is `~/.openclaw/openclaw.njs`, started as `node openclaw.njs gateway`. If you installed OpenClaw as a **pre-built binary**, the `.njs` path will differ. Override it by setting `OPENCLAW_NJS` in `/etc/auto-mihomo/proxy.env` (this file is already loaded as `EnvironmentFile=` by the systemd unit):
+
+```bash
+# /etc/auto-mihomo/proxy.env — append or edit this line:
+OPENCLAW_NJS=/path/to/your/openclaw/dist/index.js
+```
+
+If your OpenClaw binary is a fully compiled executable (not a Node script), replace the last line of `scripts/start_openclaw_with_proxy.sh` instead:
+
+```bash
+# Replace:  exec node "$OPENCLAW_NJS" gateway
+exec /usr/local/bin/openclaw gateway
+```
+
 ### Agent skill
 
 An OpenClaw skill is included at `skill/SKILL.md`. To enable:
@@ -398,7 +431,8 @@ bash scripts/post_deploy_self_check.sh
 
 It verifies:
 
-- `mihomo`, `auto-mihomo-mcp`, `openclaw-gateway` systemd services
+- `mihomo` and `auto-mihomo-mcp` systemd services (always checked)
+- `openclaw-gateway` systemd service (checked only if the service file is installed — skipped cleanly on non-OpenClaw machines)
 - Mihomo local API (`/version`)
 - MCP local API (`/mcp/health`)
 - Proxy chain to GitHub, Google, and Telegram API via Mihomo mixed-port

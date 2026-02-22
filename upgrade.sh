@@ -655,6 +655,37 @@ main() {
         chown -R "${SERVICE_USER}:${SERVICE_USER}" "$MIHOMO_HOME" 2>/dev/null || true
 
     # =========================================================================
+    # [5b/7] cron 任务迁移
+    # =========================================================================
+    step "[5b/7] cron 任务迁移"
+
+    CRON_TZ_LINE="CRON_TZ=Asia/Shanghai"
+    CRON_CMD="0 12 * * * ${INSTALL_DIR}/scripts/cron_update_proxy.sh"
+
+    CURRENT_CRONTAB="$(sudo -u "$SERVICE_USER" crontab -l 2>/dev/null || true)"
+
+    # 清理旧版本 update_sub.sh cron 条目 (pre-v1 遗留)
+    CURRENT_CRONTAB="$(printf '%s\n' "$CURRENT_CRONTAB" \
+        | grep -vF "${INSTALL_DIR}/scripts/update_sub.sh" \
+        | grep -vF "${BACKUP_DIR}/scripts/update_sub.sh" \
+        || true)"
+
+    if printf '%s\n' "$CURRENT_CRONTAB" | grep -qF "${INSTALL_DIR}/scripts/cron_update_proxy.sh"; then
+        info "cron 任务已存在, 跳过"
+    else
+        {
+            if [[ -n "${CURRENT_CRONTAB//$'\n'/}" ]]; then
+                printf '%s\n' "$CURRENT_CRONTAB"
+            fi
+            if ! printf '%s\n' "$CURRENT_CRONTAB" | grep -qFx "$CRON_TZ_LINE"; then
+                printf '%s\n' "$CRON_TZ_LINE"
+            fi
+            printf '%s\n' "$CRON_CMD"
+        } | sudo -u "$SERVICE_USER" crontab -
+        ok "cron 任务已更新: ${CRON_CMD}"
+    fi
+
+    # =========================================================================
     # [6/7] 更新 systemd 服务
     # =========================================================================
     step "[6/7] 更新 systemd 服务"
