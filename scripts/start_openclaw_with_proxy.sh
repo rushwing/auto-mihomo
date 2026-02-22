@@ -4,15 +4,37 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 OPENCLAW_MJS="${OPENCLAW_MJS:-$HOME/.openclaw/openclaw.mjs}"
+OPENCLAW_APP_DIR="${OPENCLAW_APP_DIR:-$(dirname "$OPENCLAW_MJS")}"
 LOG_FILE="${PROJECT_DIR}/openclaw-startup.log"
 
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
+log_warn() {
+    log "WARN: $*"
+    echo "[auto-mihomo] WARN: $*" >&2
+}
+
 has_stale_requires_unit() {
     command -v systemctl >/dev/null 2>&1 || return 1
     systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Requires=.*\bmihomo\.service\b'
+}
+
+openclaw_has_undici() {
+    command -v node >/dev/null 2>&1 || return 1
+    node -e '
+const path = require("path");
+const { createRequire } = require("module");
+const appDir = process.argv[1];
+try {
+  const req = createRequire(path.join(appDir, "package.json"));
+  req.resolve("undici");
+  process.exit(0);
+} catch {
+  process.exit(1);
+}
+' "$OPENCLAW_APP_DIR" >/dev/null 2>&1
 }
 
 cd "$PROJECT_DIR"
@@ -27,6 +49,11 @@ else
     else
         log "startup: update_sub.sh failed, continue with existing config"
     fi
+fi
+
+if ! openclaw_has_undici; then
+    log_warn "undici not found under ${OPENCLAW_APP_DIR}; proxy-bootstrap.cjs may not patch fetch()"
+    log_warn "install it with: cd ${OPENCLAW_APP_DIR} && pnpm add undici"
 fi
 
 # systemd 已通过 EnvironmentFile 注入代理环境，这里额外 source 以兼容子进程环境。

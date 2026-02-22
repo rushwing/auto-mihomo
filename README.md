@@ -354,6 +354,15 @@ A systemd unit for OpenClaw gateway is included at `systemd/openclaw-gateway.ser
 
 The service uses a wrapper (`scripts/start_openclaw_with_proxy.sh`) that runs `scripts/update_sub.sh` first, then starts `openclaw gateway`. It injects `http_proxy`, `https_proxy`, `GLOBAL_AGENT_HTTP_PROXY`, etc. into the OpenClaw gateway process and preloads `scripts/proxy-bootstrap.cjs` to patch Node/undici `fetch()`.
 
+`proxy-bootstrap.cjs` resolves `undici` from the OpenClaw app directory (default `~/.openclaw`, configurable via `OPENCLAW_APP_DIR`). For source-installed OpenClaw, make sure `undici` is installed in the same project:
+
+```bash
+cd ~/.openclaw
+pnpm add undici
+```
+
+The wrapper checks this at startup and prints a warning if `undici` is missing. It does **not** auto-install dependencies, to avoid making service startup depend on network/package registry availability.
+
 **Source install vs binary install**
 
 The default configuration assumes a **source-installed** OpenClaw where the main entry point is `~/.openclaw/openclaw.mjs`, started as `node openclaw.mjs gateway`. If you installed OpenClaw as a **pre-built binary**, the `.mjs` path will differ. Override it by setting `OPENCLAW_MJS` in `/etc/auto-mihomo/proxy.env` (this file is already loaded as `EnvironmentFile=` by the systemd unit):
