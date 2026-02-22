@@ -169,7 +169,7 @@ auto-mihomo/
 Generated at runtime (gitignored):
 
 ```
-├── config.yaml                # Mihomo config (generated)
+├── config.yaml                # Compatibility symlink to Mihomo config (generated)
 ├── subscription.yaml          # Downloaded subscription (generated)
 ├── uv.lock                    # Dependency lock file
 └── .venv/                     # Python virtual environment
@@ -284,7 +284,7 @@ curl http://localhost:8900/mcp/health \
 
 1. **Download** — fetches subscription YAML from `MIHOMO_SUB_URL`, validates it contains `proxies`
 2. **Bootstrap node** — selects the first subscription node as a temporary default (used to bring Mihomo up before probing)
-3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config: DNS (fake-ip + DoH, localhost-bound in `process-proxy` mode), proxy groups, GeoIP rules, controller host/secret
+3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config (written to Mihomo workdir, e.g. `/opt/mihomo/config.yaml`): DNS (fake-ip + DoH, localhost-bound in `process-proxy` mode), proxy groups, GeoIP rules, controller host/secret
 4. **Reload** — first tries Mihomo's `PUT /configs?force=true` API (with Bearer secret if configured); falls back to `systemctl restart`; falls back to direct `nohup` start
 5. **HTTP Probe Select** — iterates nodes sequentially: switches each node via Mihomo API, then sends a real HTTP request through the local mixed-port; picks the lowest-latency responsive node and reloads config with it as default
 6. **Proxy (process-proxy mode)** — writes environment variables to `/etc/profile.d/proxy.sh` and `/etc/auto-mihomo/proxy.env`

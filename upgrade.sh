@@ -410,7 +410,7 @@ install_systemd_services() {
     local user_home="$3"
 
     local mihomo_bin="${MIHOMO_HOME}/mihomo"
-    local config_file="${install_dir}/config.yaml"
+    local config_file="${MIHOMO_HOME}/config.yaml"
 
     # mihomo.service
     sed \
@@ -601,6 +601,7 @@ main() {
     chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/upgrade.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    ln -sfn "${MIHOMO_HOME}/config.yaml" "${INSTALL_DIR}/config.yaml" 2>/dev/null || true
 
     # ---- 更新 Mihomo 二进制 (离线包) ----
     VENDOR_DIR="${NEW_PKG_DIR}/vendor"

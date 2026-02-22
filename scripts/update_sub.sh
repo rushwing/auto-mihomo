@@ -42,7 +42,8 @@ MIHOMO_TEST_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
 MIHOMO_PROBE_TOP_N="${MIHOMO_PROBE_TOP_N:-10}"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
-CONFIG_FILE="${PROJECT_DIR}/config.yaml"
+# Place generated config inside Mihomo workdir to avoid /configs path restrictions on newer Mihomo versions.
+CONFIG_FILE="${MIHOMO_HOME}/config.yaml"
 LOG_FILE="${PROJECT_DIR}/update.log"
 
 SKIP_PROXY=false
@@ -174,6 +175,11 @@ generate_config() {
         --proxy-mode "$PROXY_MODE"
 
     log_info "配置文件已生成: ${CONFIG_FILE}"
+
+    # Compatibility: keep a symlink in project dir for human inspection and older tooling.
+    if [[ "${PROJECT_DIR}/config.yaml" != "${CONFIG_FILE}" ]]; then
+        ln -sfn "${CONFIG_FILE}" "${PROJECT_DIR}/config.yaml" 2>/dev/null || true
+    fi
 }
 
 # ===== 4. 重载 Mihomo 配置 =====

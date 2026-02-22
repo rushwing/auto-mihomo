@@ -249,7 +249,7 @@ echo "  ${MIHOMO_HOME} → ${CURRENT_USER}"
 echo "[7/7] 安装 systemd 服务..."
 
 MIHOMO_BIN="${MIHOMO_HOME}/mihomo"
-CONFIG_FILE="${INSTALL_DIR}/config.yaml"
+CONFIG_FILE="${MIHOMO_HOME}/config.yaml"
 
 # 处理 mihomo.service
 sed \
@@ -309,6 +309,9 @@ sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/auto-mihomo /etc/auto-mihomo/p
 sudo chmod 644 /etc/auto-mihomo/proxy.env
 echo "  /etc/auto-mihomo/proxy.env (systemd 服务)"
 echo "  已授权给 ${CURRENT_USER}"
+
+# 兼容旧排障路径: 项目目录中的 config.yaml 指向 Mihomo workdir 配置
+ln -sfn "${MIHOMO_HOME}/config.yaml" "${PROJECT_DIR}/config.yaml" 2>/dev/null || true
 
 # ===== 配置 sudoers =====
 echo ""

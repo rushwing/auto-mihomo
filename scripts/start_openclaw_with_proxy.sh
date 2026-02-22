@@ -10,13 +10,23 @@ log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG_FILE"
 }
 
+has_stale_requires_unit() {
+    command -v systemctl >/dev/null 2>&1 || return 1
+    systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Requires=.*\bmihomo\.service\b'
+}
+
 cd "$PROJECT_DIR"
 
-log "startup: begin update_sub.sh"
-if bash "${PROJECT_DIR}/scripts/update_sub.sh"; then
-    log "startup: update_sub.sh success"
+if has_stale_requires_unit; then
+    log "startup: detected stale openclaw-gateway systemd unit (Requires=mihomo.service)"
+    log "startup: skip update_sub.sh to avoid restart loop; run install.sh/upgrade.sh and systemctl daemon-reload to fix"
 else
-    log "startup: update_sub.sh failed, continue with existing config"
+    log "startup: begin update_sub.sh"
+    if bash "${PROJECT_DIR}/scripts/update_sub.sh"; then
+        log "startup: update_sub.sh success"
+    else
+        log "startup: update_sub.sh failed, continue with existing config"
+    fi
 fi
 
 # systemd 已通过 EnvironmentFile 注入代理环境，这里额外 source 以兼容子进程环境。

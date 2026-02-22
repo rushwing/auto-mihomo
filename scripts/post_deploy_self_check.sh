@@ -53,6 +53,26 @@ check_service_active() {
     fi
 }
 
+check_openclaw_unit_safety() {
+    if [[ ! -f /etc/systemd/system/openclaw-gateway.service ]]; then
+        info "openclaw-gateway unit: 未安装, 跳过防呆检查"
+        return
+    fi
+
+    if systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Requires=.*\bmihomo\.service\b'; then
+        fail "检测到旧版 openclaw-gateway unit 使用 Requires=mihomo.service (会导致重启循环)"
+        echo "      处理方式: 重新执行 install.sh/upgrade.sh 后运行 sudo systemctl daemon-reload"
+        FAILED=1
+        return
+    fi
+
+    if systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Wants=.*\bmihomo\.service\b'; then
+        pass "openclaw-gateway unit 依赖关系正确 (Wants=mihomo.service)"
+    else
+        warn "未在 openclaw-gateway 生效 unit 中发现 Wants=mihomo.service，请确认模板已更新"
+    fi
+}
+
 http_code() {
     curl -sS -o /dev/null -w '%{http_code}' "$@" || printf '000'
 }
@@ -101,6 +121,7 @@ if [[ -f /etc/systemd/system/openclaw-gateway.service ]]; then
 else
     info "openclaw-gateway: 未安装, 跳过"
 fi
+check_openclaw_unit_safety
 
 info "2) 检查本地监听接口"
 MIHOMO_HEADERS=()
