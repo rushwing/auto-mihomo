@@ -21,13 +21,11 @@ mcp_server.py - MCP HTTP 接口
 """
 import asyncio
 import os
-import subprocess
-import sys
 from datetime import datetime
 from pathlib import Path
 
 import httpx
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel
 
 # ===== 路径配置 =====
@@ -37,7 +35,11 @@ UPDATE_SCRIPT = SCRIPT_DIR / "update_sub.sh"
 
 # ===== 环境变量 =====
 API_PORT = int(os.getenv("MIHOMO_API_PORT", "9090"))
-MIHOMO_API_BASE = f"http://127.0.0.1:{API_PORT}"
+API_HOST = os.getenv("MIHOMO_CONTROLLER_HOST", "127.0.0.1")
+MIHOMO_API_SECRET = os.getenv("MIHOMO_API_SECRET", "")
+MCP_API_TOKEN = os.getenv("MCP_API_TOKEN", "")
+MIHOMO_API_BASE = f"http://{API_HOST}:{API_PORT}"
+MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
 
 # ===== FastAPI 应用 =====
 app = FastAPI(
@@ -53,6 +55,21 @@ _state = {
     "last_update_result": None,
     "update_count": 0,
 }
+
+
+def _auth_headers() -> dict[str, str]:
+    if not MIHOMO_API_SECRET:
+        return {}
+    return {"Authorization": f"Bearer {MIHOMO_API_SECRET}"}
+
+
+def _require_mcp_token(request: Request):
+    if not MCP_API_TOKEN:
+        return
+    authorization = request.headers.get("authorization")
+    expected = f"Bearer {MCP_API_TOKEN}"
+    if authorization != expected:
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 
 # ===== 响应模型 =====
@@ -128,13 +145,14 @@ async def _run_update():
 
 
 @app.post("/mcp/update", response_model=UpdateResponse)
-async def trigger_update():
+async def trigger_update(request: Request):
     """
     触发订阅更新
 
     异步执行 update_sub.sh, 包括:
     下载订阅 → 测试节点 → 生成配置 → 重启 Mihomo
     """
+    _require_mcp_token(request)
     if _state["update_running"]:
         return UpdateResponse(
             status="busy",
@@ -153,8 +171,9 @@ async def trigger_update():
 
 
 @app.get("/mcp/status", response_model=StatusResponse)
-async def get_status():
+async def get_status(request: Request):
     """查询更新状态和最近一次更新结果"""
+    _require_mcp_token(request)
     return StatusResponse(
         update_running=_state["update_running"],
         last_update_time=_state["last_update_time"],
@@ -164,14 +183,15 @@ async def get_status():
 
 
 @app.post("/mcp/switch", response_model=SwitchResponse)
-async def switch_node(req: SwitchRequest):
+async def switch_node(req: SwitchRequest, request: Request):
     """
     切换代理节点
 
     通过 Mihomo RESTful API 切换指定代理组的活动节点
     """
+    _require_mcp_token(request)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_auth_headers()) as client:
             # 验证代理组存在
             resp = await client.get(f"{MIHOMO_API_BASE}/proxies/{req.group}")
             if resp.status_code != 200:
@@ -218,11 +238,13 @@ async def switch_node(req: SwitchRequest):
 
 @app.get("/mcp/nodes")
 async def list_nodes(
+    request: Request,
     group: str = Query(default="Proxy", description="代理组名称"),
 ):
     """列出指定代理组中的所有节点及其延迟信息"""
+    _require_mcp_token(request)
     try:
-        async with httpx.AsyncClient(timeout=10) as client:
+        async with httpx.AsyncClient(timeout=10, headers=_auth_headers()) as client:
             resp = await client.get(f"{MIHOMO_API_BASE}/proxies/{group}")
             if resp.status_code != 200:
                 raise HTTPException(
@@ -269,13 +291,14 @@ async def list_nodes(
 
 
 @app.get("/mcp/health")
-async def health_check():
+async def health_check(request: Request):
     """健康检查 - 验证 MCP 服务和 Mihomo 是否正常"""
+    _require_mcp_token(request)
     mihomo_ok = False
     mihomo_version = None
 
     try:
-        async with httpx.AsyncClient(timeout=5) as client:
+        async with httpx.AsyncClient(timeout=5, headers=_auth_headers()) as client:
             resp = await client.get(f"{MIHOMO_API_BASE}/version")
             if resp.status_code == 200:
                 mihomo_ok = True
@@ -305,9 +328,16 @@ if __name__ == "__main__":
                     key, _, value = line.partition("=")
                     os.environ.setdefault(key.strip(), value.strip())
 
-    port = int(os.getenv("MCP_SERVER_PORT", "8900"))
-    print(f"MCP Server 启动于 http://0.0.0.0:{port}")
-    print(f"Mihomo API: {MIHOMO_API_BASE}")
-    print(f"API 文档: http://0.0.0.0:{port}/docs")
+    API_PORT = int(os.getenv("MIHOMO_API_PORT", "9090"))
+    API_HOST = os.getenv("MIHOMO_CONTROLLER_HOST", "127.0.0.1")
+    MIHOMO_API_SECRET = os.getenv("MIHOMO_API_SECRET", "")
+    MCP_API_TOKEN = os.getenv("MCP_API_TOKEN", "")
+    MCP_SERVER_HOST = os.getenv("MCP_SERVER_HOST", "127.0.0.1")
+    MIHOMO_API_BASE = f"http://{API_HOST}:{API_PORT}"
 
-    uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+    port = int(os.getenv("MCP_SERVER_PORT", "8900"))
+    print(f"MCP Server 启动于 http://{MCP_SERVER_HOST}:{port}")
+    print(f"Mihomo API: {MIHOMO_API_BASE}")
+    print(f"API 文档: http://{MCP_SERVER_HOST}:{port}/docs")
+
+    uvicorn.run(app, host=MCP_SERVER_HOST, port=port, log_level="info")

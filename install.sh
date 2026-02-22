@@ -190,6 +190,9 @@ else
 fi
 echo "  Python 依赖安装完成 (.venv)"
 
+# ===== 确保脚本可执行 =====
+chmod +x "${PROJECT_DIR}/scripts/"*.sh 2>/dev/null || true
+
 # ===== 设置项目目录权限 =====
 echo ""
 echo "设置目录权限 (用户: ${CURRENT_USER})..."
@@ -283,14 +286,30 @@ fi
 
 # ===== 配置定时任务 (以服务用户身份) =====
 echo ""
-echo "配置定时任务 (每天凌晨 3 点自动更新订阅, 用户: ${CURRENT_USER})..."
-CRON_CMD="0 3 * * * cd ${PROJECT_DIR} && bash ${PROJECT_DIR}/scripts/update_sub.sh >> ${PROJECT_DIR}/cron.log 2>&1"
+echo "配置定时任务 (北京时间每天 12:00 自动更新订阅, 用户: ${CURRENT_USER})..."
+CRON_TZ_LINE="CRON_TZ=Asia/Shanghai"
+CRON_CMD="0 12 * * * ${PROJECT_DIR}/scripts/cron_update_proxy.sh"
 
-if sudo -u "$CURRENT_USER" crontab -l 2>/dev/null | grep -qF "update_sub.sh"; then
+CURRENT_CRONTAB="$(sudo -u "$CURRENT_USER" crontab -l 2>/dev/null || true)"
+
+# 清理旧版本默认任务，避免重复执行 (每日 03:00 update_sub.sh)
+CURRENT_CRONTAB="$(printf '%s\n' "$CURRENT_CRONTAB" | grep -vF "${PROJECT_DIR}/scripts/update_sub.sh >> ${PROJECT_DIR}/cron.log 2>&1" || true)"
+
+if printf '%s\n' "$CURRENT_CRONTAB" | grep -qF "${PROJECT_DIR}/scripts/cron_update_proxy.sh"; then
     echo "  定时任务已存在, 跳过"
 else
-    (sudo -u "$CURRENT_USER" crontab -l 2>/dev/null; echo "$CRON_CMD") | sudo -u "$CURRENT_USER" crontab -
-    echo "  定时任务已添加"
+    {
+        # 先写入现有 crontab（去除末尾空行由 crontab 自己处理）
+        if [[ -n "${CURRENT_CRONTAB//$'\n'/}" ]]; then
+            printf '%s\n' "$CURRENT_CRONTAB"
+        fi
+        # 没有 CRON_TZ=Asia/Shanghai 时再添加，避免重复行
+        if ! printf '%s\n' "$CURRENT_CRONTAB" | grep -qFx "$CRON_TZ_LINE"; then
+            printf '%s\n' "$CRON_TZ_LINE"
+        fi
+        printf '%s\n' "$CRON_CMD"
+    } | sudo -u "$CURRENT_USER" crontab -
+    echo "  定时任务已添加: ${CRON_CMD}"
 fi
 
 # ===== .env 文件 =====
@@ -329,6 +348,12 @@ echo ""
 echo "  5. 查看 MCP API 文档:"
 echo "     http://<树莓派IP>:8900/docs"
 echo ""
-echo "定时任务: 每天 03:00 自动更新订阅 (用户: ${CURRENT_USER})"
+echo "定时任务: 北京时间每天 12:00 自动更新订阅 (用户: ${CURRENT_USER})"
 echo "日志文件: ${PROJECT_DIR}/update.log"
-echo "Cron 日志: ${PROJECT_DIR}/cron.log"
+echo "Cron 日志: ${PROJECT_DIR}/cron-noon-update.log"
+echo ""
+echo "常用维护命令:"
+echo "  自检:       bash ${PROJECT_DIR}/scripts/post_deploy_self_check.sh"
+echo "  生成密钥:   bash ${PROJECT_DIR}/scripts/generate_secrets.sh --write-env"
+echo "  同步1Password: bash ${PROJECT_DIR}/scripts/sync_secrets_to_1password.sh --vault auto-mihomo --item <ITEM>"
+echo "  一键轮换:   bash ${PROJECT_DIR}/scripts/rotate_secrets_and_restart.sh --vault auto-mihomo --item <ITEM>"

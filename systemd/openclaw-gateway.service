@@ -13,11 +13,11 @@ WorkingDirectory=__HOME__/.openclaw
 EnvironmentFile=/etc/auto-mihomo/proxy.env
 
 # Node.js 内置 fetch (undici) 不读取 HTTP_PROXY 环境变量,
-# 通过 proxy-bootstrap.js 预加载 undici ProxyAgent (零外部依赖)
+# 通过 proxy-bootstrap.cjs 预加载 undici ProxyAgent (零外部依赖)
 Environment="HOME=__HOME__"
-Environment="NODE_OPTIONS=-r __PROJECT_DIR__/scripts/proxy-bootstrap.js"
+Environment="NODE_OPTIONS=-r __PROJECT_DIR__/scripts/proxy-bootstrap.cjs"
 
-ExecStart=__HOME__/.npm-global/bin/openclaw gateway
+ExecStart=__PROJECT_DIR__/scripts/start_openclaw_with_proxy.sh
 Restart=always
 RestartSec=5
 

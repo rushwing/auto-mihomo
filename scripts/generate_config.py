@@ -37,6 +37,9 @@ def build_config(
     best_node: str,
     mixed_port: int,
     api_port: int,
+    controller_host: str,
+    api_secret: str,
+    proxy_mode: str,
 ) -> dict:
     """
     构建完整的 Mihomo 配置
@@ -46,22 +49,29 @@ def build_config(
         best_node: 延迟最低的节点名称 (作为默认选中)
         mixed_port: HTTP/SOCKS5 混合代理端口
         api_port: RESTful API 端口
+        controller_host: Mihomo external-controller 监听地址
+        api_secret: Mihomo REST API Bearer secret (空字符串 = 不鉴权)
+        proxy_mode: process-proxy 或 gateway-proxy
     """
     proxy_names = [p["name"] for p in proxies]
 
     # 将最快节点排到首位
     ordered_names = [best_node] + [n for n in proxy_names if n != best_node]
 
+    # DNS 监听地址: gateway-proxy 需绑定所有接口供局域网使用;
+    # process-proxy 只服务本机, 绑定 127.0.0.1 避免暴露 DNS 解析器到局域网
+    dns_listen_host = "0.0.0.0" if proxy_mode == "gateway-proxy" else "127.0.0.1"
+
     config = {
         # ===== 基础设置 =====
         "mixed-port": mixed_port,
-        "allow-lan": True,
-        "bind-address": "*",
+        "allow-lan": proxy_mode == "gateway-proxy",
+        "bind-address": "*" if proxy_mode == "gateway-proxy" else "127.0.0.1",
         "mode": "rule",
         "log-level": "info",
         "ipv6": False,
-        "external-controller": f"0.0.0.0:{api_port}",
-        "secret": "",
+        "external-controller": f"{controller_host}:{api_port}",
+        "secret": api_secret,
         # ===== TCP 并发 =====
         "tcp-concurrent": True,
         # ===== 进程匹配 =====
@@ -77,7 +87,7 @@ def build_config(
         "dns": {
             "enable": True,
             "ipv6": False,
-            "listen": "0.0.0.0:1053",
+            "listen": f"{dns_listen_host}:1053",
             "enhanced-mode": "fake-ip",
             "fake-ip-range": "198.18.0.1/16",
             "fake-ip-filter": [
@@ -199,6 +209,22 @@ def main():
     parser.add_argument("--best-node", required=True, help="最快节点名称")
     parser.add_argument("--mixed-port", type=int, default=7893, help="混合代理端口")
     parser.add_argument("--api-port", type=int, default=9090, help="API 端口")
+    parser.add_argument(
+        "--controller-host",
+        default="127.0.0.1",
+        help="Mihomo external-controller 监听地址 (默认: 127.0.0.1)",
+    )
+    parser.add_argument(
+        "--api-secret",
+        default="",
+        help="Mihomo REST API secret (可为空, 但不推荐)",
+    )
+    parser.add_argument(
+        "--proxy-mode",
+        choices=["process-proxy", "gateway-proxy"],
+        default="process-proxy",
+        help="代理模式: process-proxy(默认)/gateway-proxy",
+    )
     args = parser.parse_args()
 
     proxies = load_proxies(args.subscription)
@@ -213,7 +239,15 @@ def main():
         )
         args.best_node = proxies[0]["name"]
 
-    config = build_config(proxies, args.best_node, args.mixed_port, args.api_port)
+    config = build_config(
+        proxies,
+        args.best_node,
+        args.mixed_port,
+        args.api_port,
+        args.controller_host,
+        args.api_secret,
+        args.proxy_mode,
+    )
     write_config(config, args.output)
 
 

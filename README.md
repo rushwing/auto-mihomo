@@ -2,7 +2,7 @@
 
 Automated [Mihomo (Clash Meta)](https://wiki.metacubex.one) subscription manager for Raspberry Pi 5.
 
-Downloads Clash subscriptions, tests all node latencies concurrently, selects the fastest node, generates Mihomo config, and exposes an HTTP API for external systems (e.g. OpenClaw) to trigger updates and switch nodes on the fly.
+Downloads Clash subscriptions, probes node latencies via real HTTP traffic through Mihomo, selects the fastest node, generates Mihomo config, and exposes an HTTP API for external systems (e.g. OpenClaw) to trigger updates and switch nodes on the fly.
 
 ## Disclaimer
 
@@ -22,14 +22,16 @@ Any standard Clash / Clash Meta (Mihomo) YAML subscription URL is supported. The
 ## Features
 
 - **Auto subscription update** — download, parse, and apply Clash subscriptions
-- **Concurrent latency testing** — TCP connect test all nodes in parallel, pick the fastest
+- **HTTP probe node selection** — select nodes using real HTTP traffic through Mihomo mixed-port (not only raw TCP connect)
 - **Config generation** — produces a complete Mihomo config with DNS, proxy groups, and GeoIP rules
 - **Hot reload** — applies new config via Mihomo REST API without restarting the process
 - **System proxy** — writes `/etc/profile.d/proxy.sh` so all shell tools (git, curl, apt) use the proxy
 - **MCP HTTP API** — REST endpoints for OpenClaw or other systems to trigger updates and switch nodes
-- **Scheduled updates** — cron job runs daily at 03:00
+- **Scheduled updates** — cron job runs daily at 12:00 (Beijing time / `Asia/Shanghai`)
 - **Offline deployment** — build a self-contained tarball on a dev machine, deploy to a Pi with no internet
 - **OpenClaw skill** — included skill definition for AI agent integration
+- **Secret rotation helpers** — generate secrets, sync to 1Password, and one-shot rotate/restart
+- **Post-deploy self-check** — verify Mihomo/MCP/OpenClaw services and GitHub/Google/Telegram proxy chain
 
 ## Architecture
 
@@ -39,8 +41,8 @@ Raspberry Pi 5
 │                                             │
 │  update_sub.sh  ─── orchestrates ──────┐    │
 │       │                                │    │
-│       ├── test_nodes.py   (TCP测试)    │    │
 │       ├── generate_config.py (生成配置) │    │
+│       ├── HTTP probe select  (HTTP测速) │    │
 │       │                                ▼    │
 │       └──────────────────────►  Mihomo      │
 │                                :7893 proxy  │
@@ -95,14 +97,15 @@ nano .env
 # 2. Run the first update (as service user)
 sudo -u openclaw bash scripts/update_sub.sh
 
-# 3. Start the MCP API server
+# 3. Start services (OpenClaw gateway will run update_sub.sh first via wrapper)
 sudo systemctl start auto-mihomo-mcp
+sudo systemctl start openclaw-gateway
 
-# 4. Activate proxy in current shell
+# 4. Optional: activate proxy in current shell (for manual curl/git/apt)
 source /etc/profile.d/proxy.sh
 
-# 5. Verify
-curl -I https://www.google.com
+# 5. Run post-deploy self-check
+bash scripts/post_deploy_self_check.sh
 ```
 
 ## Project Structure
@@ -111,9 +114,16 @@ curl -I https://www.google.com
 auto-mihomo/
 ├── scripts/
 │   ├── update_sub.sh          # Main orchestration script
-│   ├── test_nodes.py          # Concurrent TCP latency tester
+│   ├── test_nodes.py          # TCP latency tester (legacy; node selection now uses HTTP probe in update_sub.sh)
 │   ├── generate_config.py     # Mihomo config generator
-│   └── mcp_server.py          # MCP HTTP API server (FastAPI)
+│   ├── mcp_server.py          # MCP HTTP API server (FastAPI)
+│   ├── proxy-bootstrap.cjs    # Undici fetch proxy patch for OpenClaw
+│   ├── start_openclaw_with_proxy.sh # Wrapper: update then start OpenClaw
+│   ├── cron_update_proxy.sh   # Daily noon update cron target
+│   ├── post_deploy_self_check.sh # Service + proxy chain checks
+│   ├── generate_secrets.sh    # Generate MIHOMO/MCP secrets
+│   ├── sync_secrets_to_1password.sh # Sync .env secrets to 1Password
+│   └── rotate_secrets_and_restart.sh # One-shot rotate/sync/restart/check
 ├── systemd/
 │   ├── mihomo.service              # Mihomo systemd unit
 │   ├── auto-mihomo-mcp.service     # MCP server systemd unit
@@ -153,15 +163,26 @@ nano .env
 | `MIHOMO_HOME` | `/opt/mihomo` | Mihomo data directory (GeoIP files) |
 | `MIHOMO_MIXED_PORT` | `7893` | HTTP + SOCKS5 mixed proxy port |
 | `MIHOMO_API_PORT` | `9090` | Mihomo RESTful API port |
-| `MIHOMO_TEST_WORKERS` | `50` | Concurrent threads for latency testing |
-| `MIHOMO_TCP_TIMEOUT` | `3` | TCP test timeout (seconds) |
+| `MIHOMO_CONTROLLER_HOST` | `127.0.0.1` | Mihomo controller listen host (recommended localhost only) |
+| `MIHOMO_API_SECRET` | `CHANGE_ME...` | Mihomo REST API Bearer secret |
+| `AUTO_MIHOMO_PROXY_MODE` | `process-proxy` | `process-proxy` (OpenClaw/service proxy); `gateway-proxy` (transparent LAN gateway — DNS and proxy bind to all interfaces) |
+| `MIHOMO_HTTP_PROBE_URL` | `http://www.gstatic.com/generate_204` | HTTP probe URL used for node selection via the local mixed-port |
+| `MIHOMO_HTTP_PROBE_TIMEOUT` | `12` | Probe timeout in seconds |
 | `MCP_SERVER_PORT` | `8900` | MCP HTTP server port |
+| `MCP_SERVER_HOST` | `127.0.0.1` | MCP listen host (recommended localhost only) |
+| `MCP_API_TOKEN` | `CHANGE_ME...` | MCP API Bearer token |
 
 ## MCP API
 
-Base URL: `http://<pi-ip>:8900`
+Base URL (default localhost-only): `http://127.0.0.1:8900`
 
-Interactive API docs: `http://<pi-ip>:8900/docs`
+Interactive API docs: `http://127.0.0.1:8900/docs`
+
+If `MCP_API_TOKEN` is set, all `/mcp/*` endpoints require:
+
+```bash
+-H "Authorization: Bearer <MCP_API_TOKEN>"
+```
 
 ### Endpoints
 
@@ -170,7 +191,8 @@ Interactive API docs: `http://<pi-ip>:8900/docs`
 Runs asynchronously. Poll `/mcp/status` for progress.
 
 ```bash
-curl -X POST http://localhost:8900/mcp/update
+curl -X POST http://localhost:8900/mcp/update \
+  -H "Authorization: Bearer <MCP_API_TOKEN>"
 ```
 
 ```json
@@ -180,13 +202,14 @@ curl -X POST http://localhost:8900/mcp/update
 #### `GET /mcp/status` — Check update status
 
 ```bash
-curl http://localhost:8900/mcp/status
+curl http://localhost:8900/mcp/status \
+  -H "Authorization: Bearer <MCP_API_TOKEN>"
 ```
 
 ```json
 {
   "update_running": false,
-  "last_update_time": "2026-02-06T03:00:15Z",
+  "last_update_time": "2026-02-06T12:00:15+08:00",
   "last_update_result": {"success": true, "returncode": 0},
   "update_count": 45
 }
@@ -196,6 +219,7 @@ curl http://localhost:8900/mcp/status
 
 ```bash
 curl -X POST http://localhost:8900/mcp/switch \
+  -H "Authorization: Bearer <MCP_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"node": "HK-01", "group": "Proxy"}'
 ```
@@ -203,7 +227,8 @@ curl -X POST http://localhost:8900/mcp/switch \
 #### `GET /mcp/nodes?group=Proxy` — List nodes
 
 ```bash
-curl http://localhost:8900/mcp/nodes
+curl http://localhost:8900/mcp/nodes \
+  -H "Authorization: Bearer <MCP_API_TOKEN>"
 ```
 
 ```json
@@ -221,7 +246,8 @@ curl http://localhost:8900/mcp/nodes
 #### `GET /mcp/health` — Health check
 
 ```bash
-curl http://localhost:8900/mcp/health
+curl http://localhost:8900/mcp/health \
+  -H "Authorization: Bearer <MCP_API_TOKEN>"
 ```
 
 ## How It Works
@@ -229,11 +255,12 @@ curl http://localhost:8900/mcp/health
 ### update_sub.sh workflow
 
 1. **Download** — fetches subscription YAML from `MIHOMO_SUB_URL`, validates it contains `proxies`
-2. **Test** — delegates to `test_nodes.py` which uses `ThreadPoolExecutor` (50 threads) to TCP-connect every node's `server:port`, measures latency in milliseconds
-3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config: DNS (fake-ip + DoH), three proxy groups (Proxy/Auto/Fallback), GeoIP-based rules (CN direct, foreign proxied)
-4. **Reload** — first tries Mihomo's `PUT /configs` API for zero-downtime hot reload; falls back to `systemctl restart`; falls back to direct `nohup` start
-5. **Proxy** — writes environment variables to `/etc/profile.d/proxy.sh`
-6. **Verify** — tests connectivity through the proxy via HTTP 204 check
+2. **Bootstrap node** — selects the first subscription node as a temporary default (used to bring Mihomo up before probing)
+3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config: DNS (fake-ip + DoH, localhost-bound in `process-proxy` mode), proxy groups, GeoIP rules, controller host/secret
+4. **Reload** — first tries Mihomo's `PUT /configs` API (with Bearer secret if configured); falls back to `systemctl restart`; falls back to direct `nohup` start
+5. **HTTP Probe Select** — iterates nodes sequentially: switches each node via Mihomo API, then sends a real HTTP request through the local mixed-port; picks the lowest-latency responsive node and reloads config with it as default
+6. **Proxy (process-proxy mode)** — writes environment variables to `/etc/profile.d/proxy.sh` and `/etc/auto-mihomo/proxy.env`
+7. **Verify** — tests connectivity through the proxy via `MIHOMO_HTTP_PROBE_URL`
 
 ### Service user and privilege model
 
@@ -282,10 +309,11 @@ MATCH          → Proxy
 
 ## Scheduled Updates
 
-`install.sh` configures a cron job:
+`install.sh` configures a cron job (Beijing time / `Asia/Shanghai`) and de-duplicates existing entries:
 
 ```
-0 3 * * * cd /path/to/auto-mihomo && bash scripts/update_sub.sh >> cron.log 2>&1
+CRON_TZ=Asia/Shanghai
+0 12 * * * /path/to/auto-mihomo/scripts/cron_update_proxy.sh
 ```
 
 ## OpenClaw Integration
@@ -296,7 +324,7 @@ A systemd unit for OpenClaw gateway is included at `systemd/openclaw-gateway.ser
 
 `install.sh` automatically installs and enables `openclaw-gateway.service` when it detects the `openclaw` binary at `~/.npm-global/bin/openclaw`. No manual copy is needed.
 
-The service starts after Mihomo is running and injects `http_proxy`, `https_proxy`, `GLOBAL_AGENT_HTTP_PROXY`, etc. into the OpenClaw gateway process.
+The service uses a wrapper (`scripts/start_openclaw_with_proxy.sh`) that runs `scripts/update_sub.sh` first, then starts `openclaw gateway`. It injects `http_proxy`, `https_proxy`, `GLOBAL_AGENT_HTTP_PROXY`, etc. into the OpenClaw gateway process and preloads `scripts/proxy-bootstrap.cjs` to patch Node/undici `fetch()`.
 
 ### Agent skill
 
@@ -307,9 +335,62 @@ An OpenClaw skill is included at `skill/SKILL.md`. To enable:
 ln -s /path/to/auto-mihomo/skill ~/.openclaw/skills/auto-mihomo
 ```
 
-Set `AUTO_MIHOMO_API=http://<pi-ip>:8900` in your OpenClaw environment.
+Set `AUTO_MIHOMO_API=http://127.0.0.1:8900` in your OpenClaw environment (default localhost-only deployment).
+
+If you need remote access from another machine, set `MCP_SERVER_HOST=0.0.0.0` and keep `MCP_API_TOKEN` enabled.
 
 The skill teaches the agent to check proxy health, trigger updates, and switch nodes when network requests fail.
+
+## Secrets and 1Password
+
+### Generate local secrets
+
+Generate `MIHOMO_API_SECRET` and `MCP_API_TOKEN`:
+
+```bash
+bash scripts/generate_secrets.sh --write-env
+```
+
+### Sync secrets and subscription URL to 1Password
+
+Store these fields in a 1Password item (recommended labels use the same names):
+
+- `MIHOMO_SUB_URL`
+- `MIHOMO_API_SECRET`
+- `MCP_API_TOKEN`
+
+Sync from `.env` to an existing item:
+
+```bash
+bash scripts/sync_secrets_to_1password.sh --vault auto-mihomo --item raspi-prod
+```
+
+### One-shot rotation (generate → sync → restart → health check)
+
+```bash
+bash scripts/rotate_secrets_and_restart.sh --vault auto-mihomo --item raspi-prod
+```
+
+Useful flags:
+
+- `--skip-sync`
+- `--skip-restart`
+- `--skip-health`
+
+## Post-Deploy Self-Check
+
+Run the built-in self-check script after deployment or after secret rotation:
+
+```bash
+bash scripts/post_deploy_self_check.sh
+```
+
+It verifies:
+
+- `mihomo`, `auto-mihomo-mcp`, `openclaw-gateway` systemd services
+- Mihomo local API (`/version`)
+- MCP local API (`/mcp/health`)
+- Proxy chain to GitHub, Google, and Telegram API via Mihomo mixed-port
 
 ## Build Package
 

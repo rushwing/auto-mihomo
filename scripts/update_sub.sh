@@ -33,8 +33,11 @@ MIHOMO_BIN="${MIHOMO_BIN:-/opt/mihomo/mihomo}"
 MIHOMO_HOME="${MIHOMO_HOME:-/opt/mihomo}"
 MIXED_PORT="${MIHOMO_MIXED_PORT:-7893}"
 API_PORT="${MIHOMO_API_PORT:-9090}"
-MAX_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
-TCP_TIMEOUT="${MIHOMO_TCP_TIMEOUT:-3}"
+API_HOST="${MIHOMO_CONTROLLER_HOST:-127.0.0.1}"
+API_SECRET="${MIHOMO_API_SECRET:-}"
+PROXY_MODE="${AUTO_MIHOMO_PROXY_MODE:-process-proxy}"
+HTTP_PROBE_URL="${MIHOMO_HTTP_PROBE_URL:-http://www.gstatic.com/generate_204}"
+HTTP_PROBE_TIMEOUT="${MIHOMO_HTTP_PROBE_TIMEOUT:-12}"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
 CONFIG_FILE="${PROJECT_DIR}/config.yaml"
@@ -46,11 +49,26 @@ SKIP_PROXY=false
 # ===== 日志 =====
 log() {
     local level="$1"; shift
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${level}] $*" | tee -a "$LOG_FILE"
+    # >&2: log lines go to stderr so $() captures of functions only get their return value
+    echo "[$(date '+%Y-%m-%d %H:%M:%S')] [${level}] $*" | tee -a "$LOG_FILE" >&2
 }
 log_info()  { log "INFO"  "$@"; }
 log_warn()  { log "WARN"  "$@"; }
 log_error() { log "ERROR" "$@"; }
+
+mihomo_auth_header_args() {
+    if [[ -n "$API_SECRET" ]]; then
+        printf '%s\n' "-H" "Authorization: Bearer ${API_SECRET}"
+    fi
+}
+
+mihomo_curl() {
+    local args=()
+    while IFS= read -r line; do
+        args+=("$line")
+    done < <(mihomo_auth_header_args)
+    curl "${args[@]}" "$@"
+}
 
 # ===== 激活 Python 虚拟环境 (uv 默认 .venv) =====
 if [[ -f "${PROJECT_DIR}/.venv/bin/activate" ]]; then
@@ -119,25 +137,16 @@ print(len(d.get('proxies', [])))
 }
 
 # ===== 2. 测试节点延迟 =====
-test_nodes() {
-    # 注意: 此函数的 stdout 会被 main() 通过 $() 捕获,
-    # 所有 log 必须重定向到 stderr, 仅 echo 最终结果到 stdout
-    log_info "开始并发测试节点延迟 (workers=${MAX_WORKERS}, timeout=${TCP_TIMEOUT}s)..." >&2
-
-    local best_node
-    best_node=$(python3 "${SCRIPT_DIR}/test_nodes.py" \
-        --subscription "$SUB_FILE" \
-        --workers "$MAX_WORKERS" \
-        --timeout "$TCP_TIMEOUT" \
-        2> >(tee -a "$LOG_FILE" >&2))
-
-    if [[ -z "$best_node" ]]; then
-        log_error "无法确定最快节点" >&2
-        return 1
-    fi
-
-    log_info "最快节点: ${best_node}" >&2
-    echo "$best_node"
+get_first_node_name() {
+    python3 -c "
+import yaml, sys
+with open('${SUB_FILE}', encoding='utf-8') as f:
+    d = yaml.safe_load(f) or {}
+proxies = d.get('proxies') or []
+if not proxies:
+    sys.exit(1)
+print(proxies[0].get('name', ''))
+"
 }
 
 # ===== 3. 生成配置 =====
@@ -150,7 +159,10 @@ generate_config() {
         --output "$CONFIG_FILE" \
         --best-node "$best_node" \
         --mixed-port "$MIXED_PORT" \
-        --api-port "$API_PORT"
+        --api-port "$API_PORT" \
+        --controller-host "$API_HOST" \
+        --api-secret "$API_SECRET" \
+        --proxy-mode "$PROXY_MODE"
 
     log_info "配置文件已生成: ${CONFIG_FILE}"
 }
@@ -161,11 +173,11 @@ reload_mihomo() {
 
     # 方式 1: 通过 Mihomo RESTful API 热重载 (无需 root 权限)
     #   PUT /configs 让 Mihomo 重新加载配置文件, 无需重启进程
-    local api_url="http://127.0.0.1:${API_PORT}"
+    local api_url="http://${API_HOST}:${API_PORT}"
 
-    if curl -s --max-time 3 "${api_url}/version" &>/dev/null; then
+    if mihomo_curl -s --max-time 3 "${api_url}/version" &>/dev/null; then
         local http_code
-        http_code=$(curl -s -o /dev/null -w '%{http_code}' \
+        http_code=$(mihomo_curl -s -o /dev/null -w '%{http_code}' \
             -X PUT "${api_url}/configs" \
             -H "Content-Type: application/json" \
             -d "{\"path\": \"${CONFIG_FILE}\"}" \
@@ -219,14 +231,97 @@ reload_mihomo() {
     fi
 }
 
-# ===== 5. 设置系统代理 =====
+# ===== 5. 通过 Mihomo 实际 HTTP 探测选择节点 =====
+probe_and_select_best_node() {
+    # 仅在 process-proxy 模式下使用本机 mixed-port 做服务级探测
+    if [[ "$PROXY_MODE" != "process-proxy" ]]; then
+        log_warn "当前模式为 ${PROXY_MODE}; 跳过 process-proxy HTTP 探测选节点"
+        return 0
+    fi
+
+    local api_url="http://${API_HOST}:${API_PORT}"
+    local best_node=""
+    local best_ms=999999
+    local node total tested
+    total=0
+    tested=0
+
+    log_info "开始实际 HTTP 探测选节点 (url=${HTTP_PROBE_URL}, timeout=${HTTP_PROBE_TIMEOUT}s)..."
+
+    while IFS= read -r node; do
+        [[ -z "$node" ]] && continue
+        total=$((total + 1))
+
+        local payload
+        payload=$(python3 -c 'import json,sys; print(json.dumps({"name": sys.argv[1]}, ensure_ascii=False))' "$node")
+
+        local switch_code
+        switch_code=$(mihomo_curl -s -o /dev/null -w '%{http_code}' \
+            -X PUT "${api_url}/proxies/Proxy" \
+            -H "Content-Type: application/json" \
+            -d "$payload" \
+            --max-time 8) || switch_code=""
+
+        if [[ "$switch_code" != "204" ]]; then
+            log_warn "切换节点失败, 跳过: ${node} (HTTP ${switch_code:-ERR})"
+            continue
+        fi
+
+        local probe_out http_code time_total latency_ms
+        probe_out=$(curl -sL -o /dev/null \
+            -w '%{http_code} %{time_total}' \
+            --connect-timeout 5 \
+            --max-time "$HTTP_PROBE_TIMEOUT" \
+            -x "http://127.0.0.1:${MIXED_PORT}" \
+            "$HTTP_PROBE_URL" 2>/dev/null) || probe_out=""
+
+        http_code="${probe_out%% *}"
+        time_total="${probe_out#* }"
+        [[ "$probe_out" == "$http_code" ]] && time_total=""
+
+        if [[ "$http_code" != "204" && "$http_code" != "200" ]]; then
+            log_warn "HTTP 探测失败: ${node} (HTTP ${http_code:-ERR})"
+            continue
+        fi
+
+        latency_ms=$(python3 -c 'import sys; print(int(float(sys.argv[1])*1000))' "${time_total:-999}") || latency_ms=999999
+        tested=$((tested + 1))
+        log_info "HTTP 探测: ${node} -> ${latency_ms}ms"
+
+        if (( latency_ms < best_ms )); then
+            best_ms=$latency_ms
+            best_node="$node"
+        fi
+    done < <(python3 -c "
+import yaml
+with open('${SUB_FILE}', encoding='utf-8') as f:
+    d = yaml.safe_load(f) or {}
+for p in d.get('proxies', []) or []:
+    print(p.get('name', ''))
+")
+
+    if [[ -z "$best_node" ]]; then
+        log_warn "HTTP 探测未选出可用节点 (总节点=${total}, 成功=${tested})"
+        return 1
+    fi
+
+    log_info "HTTP 探测最佳节点: ${best_node} (${best_ms}ms)"
+    echo "$best_node"
+}
+
+# ===== 6. 设置系统代理 =====
 setup_proxy() {
     if [[ "$SKIP_PROXY" == "true" ]]; then
         log_info "跳过系统代理设置 (--skip-proxy)"
         return 0
     fi
 
-    log_info "正在设置系统代理..."
+    if [[ "$PROXY_MODE" != "process-proxy" ]]; then
+        log_warn "当前模式为 ${PROXY_MODE}; 跳过环境变量代理注入 (仅 process-proxy 使用)"
+        return 0
+    fi
+
+    log_info "正在设置系统代理 (process-proxy)..."
 
     # proxy.sh 在 install.sh 中已由 root 创建并 chown 给服务用户,
     # 此处直接写入, 无需 sudo
@@ -272,12 +367,12 @@ SYSENV_EOF
     log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
 }
 
-# ===== 6. 验证代理 =====
+# ===== 7. 验证代理 =====
 verify_proxy() {
     log_info "正在验证代理连通性..."
     sleep 1
 
-    local test_url="http://www.gstatic.com/generate_204"
+    local test_url="$HTTP_PROBE_URL"
     local http_code
     http_code=$(curl -sL -o /dev/null -w '%{http_code}' \
         --connect-timeout 10 \
@@ -302,9 +397,10 @@ main() {
     # Step 1: 下载订阅
     download_subscription || { log_error "下载订阅失败, 中止"; exit 1; }
 
-    # Step 2: 测试节点
+    # Step 2: 选一个临时节点生成配置 (真实选优在 Mihomo 启动后进行 HTTP 探测)
     local best_node
-    best_node=$(test_nodes) || { log_error "节点测试失败, 中止"; exit 1; }
+    best_node=$(get_first_node_name) || { log_error "无法读取订阅中的首个节点, 中止"; exit 1; }
+    log_info "临时默认节点: ${best_node}"
 
     # Step 3: 生成配置
     generate_config "$best_node" || { log_error "生成配置失败, 中止"; exit 1; }
@@ -312,10 +408,20 @@ main() {
     # Step 4: 重载 Mihomo
     reload_mihomo || { log_error "重载 Mihomo 失败, 中止"; exit 1; }
 
-    # Step 5: 设置系统代理
+    # Step 5: 通过 Mihomo 实际 HTTP 探测重新选优
+    local probed_best_node=""
+    probed_best_node=$(probe_and_select_best_node) || true
+    if [[ -n "$probed_best_node" && "$probed_best_node" != "$best_node" ]]; then
+        log_info "应用 HTTP 探测结果并重载配置: ${best_node} -> ${probed_best_node}"
+        generate_config "$probed_best_node" || { log_error "重新生成配置失败, 中止"; exit 1; }
+        reload_mihomo || { log_error "应用 HTTP 探测结果失败, 中止"; exit 1; }
+        best_node="$probed_best_node"
+    fi
+
+    # Step 6: 设置系统代理
     setup_proxy
 
-    # Step 6: 验证
+    # Step 7: 验证
     verify_proxy
 
     log_info "========== 更新完成 =========="
