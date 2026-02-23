@@ -409,6 +409,11 @@ NO_PROXY=localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16
 GLOBAL_AGENT_HTTP_PROXY=http://127.0.0.1:${MIXED_PORT}
 SYSENV_EOF
         log_info "systemd 代理环境文件已写入: ${proxy_env}"
+
+        # openclaw.json telegram proxy 同步
+        if bash "${SCRIPT_DIR}/patch_openclaw_proxy.sh" "$proxy_env" 2>>"$LOG_FILE"; then
+            log_info "openclaw.json telegram proxy 已同步"
+        fi
     fi
 
     log_info "系统代理已设置 (mixed-port: ${MIXED_PORT})"
