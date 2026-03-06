@@ -40,6 +40,8 @@ HTTP_PROBE_URL="${MIHOMO_HTTP_PROBE_URL:-http://www.gstatic.com/generate_204}"
 HTTP_PROBE_TIMEOUT="${MIHOMO_HTTP_PROBE_TIMEOUT:-12}"
 MIHOMO_TEST_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
 MIHOMO_PROBE_TOP_N="${MIHOMO_PROBE_TOP_N:-10}"
+LATENCY_THRESHOLD_MS="${MIHOMO_LATENCY_THRESHOLD_MS:-300}"
+EXCLUDE_LIST_FILE="${SCRIPT_DIR}/node_exclude_list.txt"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
 # Place generated config inside Mihomo workdir to avoid /configs path restrictions on newer Mihomo versions.
@@ -159,6 +161,20 @@ print(proxies[0].get('name', ''))
 "
 }
 
+# ===== 2b. 检查节点是否在排除列表中 =====
+is_node_excluded() {
+    local node_name="$1"
+    [[ ! -f "$EXCLUDE_LIST_FILE" ]] && return 1
+    local pattern
+    while IFS= read -r pattern; do
+        [[ -z "$pattern" || "$pattern" == \#* ]] && continue
+        if echo "$node_name" | grep -qi "$pattern"; then
+            return 0
+        fi
+    done < "$EXCLUDE_LIST_FILE"
+    return 1
+}
+
 # ===== 3. 生成配置 =====
 generate_config() {
     local best_node="$1"
@@ -270,6 +286,8 @@ probe_and_select_best_node() {
     local api_url="http://${API_HOST}:${API_PORT}"
     local best_node=""
     local best_ms=999999
+    local fallback_node=""   # 非排除节点中延迟最低的 (可能 > 阈值，用于兜底)
+    local fallback_ms=999999
     local node total tested
     total=0
     tested=0
@@ -322,8 +340,26 @@ probe_and_select_best_node() {
         tested=$((tested + 1))
         log_info "HTTP 探测: ${node} -> ${latency_ms}ms"
 
+        # 检查排除列表
+        if is_node_excluded "$node"; then
+            log_warn "节点在排除列表中, 跳过: ${node}"
+            continue
+        fi
+
+        # 非排除节点: 无论延迟如何都记录为兜底候选
+        if (( latency_ms < fallback_ms )); then
+            fallback_ms=$latency_ms
+            fallback_node="$node"
+        fi
+
+        # 检查延迟阈值
+        if (( latency_ms > LATENCY_THRESHOLD_MS )); then
+            log_warn "节点延迟过高 (${latency_ms}ms > ${LATENCY_THRESHOLD_MS}ms), 暂跳过: ${node}"
+            continue
+        fi
+
         if [[ "$PROBE_STRATEGY" == "first-success" ]]; then
-            # 启动/重启: 候选已按 TCP 延迟排序，第一个通过即最佳，立即返回
+            # 启动/重启: 候选已按 TCP 延迟排序，第一个通过且满足条件的即最佳，立即返回
             best_node="$node"
             best_ms=$latency_ms
             break
@@ -347,6 +383,13 @@ for p in d.get('proxies', []) or []:
 "
         fi
     )
+
+    # 兜底: 若无节点满足阈值条件, 使用非排除节点中延迟最低的
+    if [[ -z "$best_node" && -n "$fallback_node" ]]; then
+        log_warn "所有节点延迟均超过阈值 ${LATENCY_THRESHOLD_MS}ms, 使用最低延迟兜底: ${fallback_node} (${fallback_ms}ms)"
+        best_node="$fallback_node"
+        best_ms="$fallback_ms"
+    fi
 
     if [[ -z "$best_node" ]]; then
         log_warn "HTTP 探测未选出可用节点 (总节点=${total}, 成功=${tested})"
