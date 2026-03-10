@@ -142,13 +142,20 @@ check_proxy_target "Google 首页" "https://www.google.com" "常见 200/301/302"
 check_proxy_target "GitHub" "https://github.com" "常见 200/301/302"
 check_proxy_target "Telegram API" "https://api.telegram.org" "常见 200/302/401/404"
 
-info "4) 检查 OpenClaw 预加载代理日志 (最近 50 行)"
+info "4) 检查 OpenClaw gateway unit 兼容性"
 if [[ ! -f /etc/systemd/system/openclaw-gateway.service ]]; then
-    info "openclaw-gateway 未安装, 跳过日志检查"
-elif journalctl -u openclaw-gateway -n 50 --no-pager 2>/dev/null | grep -q "\[proxy-bootstrap\] patched"; then
-    pass "OpenClaw 已加载 proxy-bootstrap.cjs"
+    info "openclaw-gateway 未安装, 跳过 unit 检查"
 else
-    warn "未在 openclaw-gateway 最近日志中看到 proxy-bootstrap patched 日志（可能日志已滚动或启动较早）"
+    unit_dump="$(systemctl cat openclaw-gateway 2>/dev/null || true)"
+    if echo "$unit_dump" | grep -q "proxy-bootstrap.cjs"; then
+        warn "openclaw-gateway unit 仍在注入 proxy-bootstrap.cjs，建议重新运行 upgrade.sh"
+    elif echo "$unit_dump" | grep -q "OPENCLAW_SERVICE_KIND=gateway" \
+        && echo "$unit_dump" | grep -q "OPENCLAW_STATE_DIR=" \
+        && echo "$unit_dump" | grep -q "OPENCLAW_CONFIG_PATH="; then
+        pass "openclaw-gateway unit 已切换到新版环境变量模型"
+    else
+        warn "openclaw-gateway unit 缺少新版 OpenClaw 服务元数据，请确认已更新"
+    fi
 fi
 
 if [[ "$FAILED" -ne 0 ]]; then

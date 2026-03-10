@@ -431,9 +431,27 @@ install_systemd_services() {
         | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
     ok "auto-mihomo-mcp.service"
 
-    # openclaw-gateway.service (仅当 openclaw.mjs 存在时)
-    local openclaw_mjs="${user_home}/.openclaw/openclaw.mjs"
-    if [[ -f "$openclaw_mjs" ]]; then
+    # openclaw-gateway.service (兼容新版 dist/index.js 和旧版 openclaw.mjs)
+    local openclaw_app_dir="${user_home}/.openclaw"
+    local openclaw_entry=""
+    if [[ -f "${openclaw_app_dir}/dist/index.js" ]]; then
+        openclaw_entry="${openclaw_app_dir}/dist/index.js"
+    elif [[ -f "${openclaw_app_dir}/openclaw.mjs" ]]; then
+        openclaw_entry="${openclaw_app_dir}/openclaw.mjs"
+    fi
+    if [[ -n "$openclaw_entry" ]]; then
+        local openclaw_service_version="unknown"
+        if [[ -f "${openclaw_app_dir}/package.json" ]]; then
+            openclaw_service_version=$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        print(json.load(fh).get("version") or "unknown")
+except Exception:
+    print("unknown")
+' "${openclaw_app_dir}/package.json")
+        fi
+
         # 解析 Node.js 可执行文件路径 (systemd PATH 中没有 nvm bin dir)
         local _node_bin=""
         if [[ -d "${user_home}/.nvm/versions/node" ]]; then
@@ -455,6 +473,7 @@ install_systemd_services() {
             -e "s|__HOME__|${user_home}|g" \
             -e "s|__PROJECT_DIR__|${install_dir}|g" \
             -e "s|__NODE_DIR__|${node_dir}|g" \
+            -e "s|__OPENCLAW_SERVICE_VERSION__|${openclaw_service_version}|g" \
             "${install_dir}/systemd/openclaw-gateway.service" \
             | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
         ok "openclaw-gateway.service"

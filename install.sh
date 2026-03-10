@@ -268,10 +268,28 @@ sed \
     "${INSTALL_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
-# 处理 openclaw-gateway.service (仅当 openclaw.mjs 存在时安装)
-OPENCLAW_MJS="${USER_HOME}/.openclaw/openclaw.mjs"
-if [[ -f "$OPENCLAW_MJS" ]]; then
-    echo "  检测到 openclaw: ${OPENCLAW_MJS}"
+# 处理 openclaw-gateway.service (仅当检测到新版/旧版 OpenClaw 入口时安装)
+OPENCLAW_APP_DIR="${USER_HOME}/.openclaw"
+OPENCLAW_ENTRY=""
+if [[ -f "${OPENCLAW_APP_DIR}/dist/index.js" ]]; then
+    OPENCLAW_ENTRY="${OPENCLAW_APP_DIR}/dist/index.js"
+elif [[ -f "${OPENCLAW_APP_DIR}/openclaw.mjs" ]]; then
+    OPENCLAW_ENTRY="${OPENCLAW_APP_DIR}/openclaw.mjs"
+fi
+if [[ -n "$OPENCLAW_ENTRY" ]]; then
+    echo "  检测到 openclaw: ${OPENCLAW_ENTRY}"
+
+    OPENCLAW_SERVICE_VERSION="unknown"
+    if [[ -f "${OPENCLAW_APP_DIR}/package.json" ]]; then
+        OPENCLAW_SERVICE_VERSION=$(python3 -c '
+import json, sys
+try:
+    with open(sys.argv[1], encoding="utf-8") as fh:
+        print(json.load(fh).get("version") or "unknown")
+except Exception:
+    print("unknown")
+' "${OPENCLAW_APP_DIR}/package.json")
+    fi
 
     # 解析 Node.js 可执行文件路径, 优先使用 nvm (systemd PATH 中没有 nvm bin dir)
     _node_bin=""
@@ -297,11 +315,12 @@ if [[ -f "$OPENCLAW_MJS" ]]; then
         -e "s|__HOME__|${USER_HOME}|g" \
         -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
         -e "s|__NODE_DIR__|${NODE_DIR}|g" \
+        -e "s|__OPENCLAW_SERVICE_VERSION__|${OPENCLAW_SERVICE_VERSION}|g" \
         "${INSTALL_DIR}/systemd/openclaw-gateway.service" \
         | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
     INSTALL_OPENCLAW_GW=true
 else
-    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_MJS})"
+    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_APP_DIR}/dist/index.js 或 openclaw.mjs)"
     INSTALL_OPENCLAW_GW=false
 fi
 
