@@ -101,5 +101,16 @@ cd "$OPENCLAW_APP_DIR"
 log "startup: node → ${NODE_BIN}"
 log "startup: entry → ${OPENCLAW_ENTRY}"
 log "startup: cwd → ${OPENCLAW_APP_DIR}"
+
+# Preload proxy-bootstrap.cjs so undici's global dispatcher is upgraded to
+# EnvHttpProxyAgent before OpenClaw makes any fetch calls.
+# Upstream PR openclaw/openclaw#42320 (not yet in v2026.3.7) would make this
+# unnecessary; until it merges we must inject it ourselves via NODE_OPTIONS.
+BOOTSTRAP="${SCRIPT_DIR}/proxy-bootstrap.cjs"
+if [[ -f "$BOOTSTRAP" ]]; then
+    export NODE_OPTIONS="-r ${BOOTSTRAP}${NODE_OPTIONS:+ ${NODE_OPTIONS}}"
+    log "startup: NODE_OPTIONS → ${NODE_OPTIONS}"
+fi
+
 log "startup: exec openclaw gateway --port ${OPENCLAW_PORT}"
 exec "$NODE_BIN" "$OPENCLAW_ENTRY" gateway --port "$OPENCLAW_PORT"
