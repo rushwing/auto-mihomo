@@ -10,6 +10,7 @@ test_nodes.py - 并发 TCP 连接测试所有代理节点延迟
     python3 test_nodes.py --subscription subscription.yaml --workers 100 --timeout 5
 """
 import argparse
+import re
 import socket
 import sys
 import time
@@ -62,13 +63,39 @@ def main():
     parser.add_argument(
         "--top-n", type=int, default=1, help="输出延迟最低的前 N 个节点名称 (默认: 1)"
     )
+    parser.add_argument(
+        "--exclude-file", default=None,
+        help="排除列表文件路径；匹配的节点跳过 TCP 测试 (默认: 不排除)"
+    )
     args = parser.parse_args()
+
+    # 读取排除列表
+    exclude_patterns: list[re.Pattern] = []
+    if args.exclude_file:
+        try:
+            with open(args.exclude_file, "r", encoding="utf-8") as ef:
+                for line in ef:
+                    line = line.strip()
+                    if not line or line.startswith("#"):
+                        continue
+                    exclude_patterns.append(re.compile(re.escape(line), re.IGNORECASE))
+        except FileNotFoundError:
+            pass
+
+    def is_excluded(name: str) -> bool:
+        return any(p.search(name) for p in exclude_patterns)
 
     # 读取订阅文件
     with open(args.subscription, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f)
 
     proxies = data.get("proxies", [])
+    if exclude_patterns:
+        before = len(proxies)
+        proxies = [p for p in proxies if not is_excluded(p.get("name", ""))]
+        skipped = before - len(proxies)
+        if skipped:
+            print(f"排除列表过滤: 跳过 {skipped} 个节点", file=sys.stderr)
     if not proxies:
         print("错误: 订阅文件中没有找到代理节点", file=sys.stderr)
         sys.exit(1)

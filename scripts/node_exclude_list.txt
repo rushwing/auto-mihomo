@@ -11,3 +11,11 @@ HongKong
 HK-
 (HK)
 [HK]
+
+# 新加坡 (部分节点不稳定，502 频发)
+新加坡
+Singapore
+ SG
+SG-
+(SG)
+[SG]

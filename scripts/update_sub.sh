@@ -42,6 +42,7 @@ MIHOMO_TEST_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
 MIHOMO_PROBE_TOP_N="${MIHOMO_PROBE_TOP_N:-10}"
 LATENCY_THRESHOLD_MS="${MIHOMO_LATENCY_THRESHOLD_MS:-300}"
 EXCLUDE_LIST_FILE="${SCRIPT_DIR}/node_exclude_list.txt"
+FAVOURITE_LIST_FILE="${SCRIPT_DIR}/node_favourite_list.txt"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
 # Place generated config inside Mihomo workdir to avoid /configs path restrictions on newer Mihomo versions.
@@ -175,6 +176,36 @@ is_node_excluded() {
     return 1
 }
 
+# ===== 2c. 检查节点是否在优先列表中 =====
+is_node_favourite() {
+    local node_name="$1"
+    [[ ! -f "$FAVOURITE_LIST_FILE" ]] && return 1
+    local pattern
+    while IFS= read -r pattern; do
+        [[ -z "$pattern" || "$pattern" == \#* ]] && continue
+        if echo "$node_name" | grep -qi "$pattern"; then
+            return 0
+        fi
+    done < "$FAVOURITE_LIST_FILE"
+    return 1
+}
+
+# ===== 2d. 从订阅中提取所有优先节点名称（排除列表中的除外）=====
+get_favourite_nodes() {
+    [[ ! -f "$FAVOURITE_LIST_FILE" ]] && return 0
+    python3 -c "
+import yaml
+with open('${SUB_FILE}', encoding='utf-8') as f:
+    d = yaml.safe_load(f) or {}
+for p in d.get('proxies', []) or []:
+    print(p.get('name', ''))
+" | while IFS= read -r name; do
+        [[ -z "$name" ]] && continue
+        is_node_excluded "$name" && continue
+        is_node_favourite "$name" && echo "$name"
+    done
+}
+
 # ===== 3. 生成配置 =====
 generate_config() {
     local best_node="$1"
@@ -265,11 +296,14 @@ reload_mihomo() {
 # ===== 5a. TCP 并发预筛选 — 返回延迟最低的前 N 个节点名称 =====
 tcp_prefilter_nodes() {
     log_info "TCP 预筛选节点 (workers=${MIHOMO_TEST_WORKERS}, top=${MIHOMO_PROBE_TOP_N})..."
+    local extra_args=()
+    [[ -f "$EXCLUDE_LIST_FILE" ]] && extra_args+=(--exclude-file "$EXCLUDE_LIST_FILE")
     python3 "${SCRIPT_DIR}/test_nodes.py" \
         --subscription "$SUB_FILE" \
         --workers "$MIHOMO_TEST_WORKERS" \
         --top-n "$MIHOMO_PROBE_TOP_N" \
-        --timeout 3
+        --timeout 3 \
+        "${extra_args[@]}"
 }
 
 # ===== 5b. 通过 Mihomo 实际 HTTP 探测选择节点 =====
@@ -466,21 +500,30 @@ SYSENV_EOF
 # ===== 7. 验证代理 =====
 verify_proxy() {
     log_info "正在验证代理连通性..."
-    sleep 1
 
     local test_url="$HTTP_PROBE_URL"
-    local http_code
-    http_code=$(curl -sL -o /dev/null -w '%{http_code}' \
-        --connect-timeout 10 \
-        --max-time 15 \
-        -x "http://127.0.0.1:${MIXED_PORT}" \
-        "$test_url" 2>/dev/null) || true
+    local http_code attempt
+    local max_attempts=3
 
-    if [[ "$http_code" == "204" ]]; then
-        log_info "代理验证通过 (204 No Content)"
-    else
-        log_warn "代理验证未通过 (HTTP ${http_code}), 请手动检查"
-    fi
+    for attempt in 1 2 3; do
+        sleep "$attempt"   # 渐进等待: 1s, 2s, 3s（给 Mihomo 热重载后建连时间）
+        http_code=$(curl -sL -o /dev/null -w '%{http_code}' \
+            --connect-timeout 10 \
+            --max-time 15 \
+            -x "http://127.0.0.1:${MIXED_PORT}" \
+            "$test_url" 2>/dev/null) || http_code=""
+
+        if [[ "$http_code" == "204" || "$http_code" == "200" ]]; then
+            log_info "代理验证通过 (HTTP ${http_code})"
+            return 0
+        fi
+
+        if (( attempt < max_attempts )); then
+            log_warn "代理验证第 ${attempt} 次失败 (HTTP ${http_code:-ERR}), 重试..."
+        fi
+    done
+
+    log_warn "代理验证未通过 (HTTP ${http_code:-ERR}), 请手动检查"
 }
 
 # ===== 主流程 =====
@@ -514,6 +557,18 @@ main() {
             log_info "TCP 预筛选完成，候选节点: ${shortlist_count} 个"
         else
             log_warn "TCP 预筛选无结果，HTTP 探测将覆盖所有节点"
+        fi
+
+        # 将优先列表节点插到 shortlist 头部（去重），确保 first-success 策略下优先探测
+        local favourite_nodes
+        favourite_nodes=$(get_favourite_nodes) || true
+        if [[ -n "$favourite_nodes" ]]; then
+            local fav_count
+            fav_count=$(printf '%s\n' "$favourite_nodes" | grep -c '.' || true)
+            log_info "优先节点: ${fav_count} 个 (将在 HTTP 探测中优先排序)"
+            # 合并: favourite 在前，tcp_shortlist 去掉已在 favourite 中的节点
+            tcp_shortlist=$(printf '%s\n' "$favourite_nodes" "$tcp_shortlist" \
+                | awk 'NF && !seen[$0]++')
         fi
     fi
 
