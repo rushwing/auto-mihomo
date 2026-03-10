@@ -144,7 +144,7 @@ auto-mihomo/
 │   ├── test_nodes.py          # TCP latency tester (legacy; node selection now uses HTTP probe in update_sub.sh)
 │   ├── generate_config.py     # Mihomo config generator
 │   ├── mcp_server.py          # MCP HTTP API server (FastAPI)
-│   ├── proxy-bootstrap.cjs    # Optional legacy fallback; no longer enabled by default
+│   ├── proxy-bootstrap.cjs    # Preloaded via NODE_OPTIONS to set undici EnvHttpProxyAgent
 │   ├── start_openclaw_with_proxy.sh # Wrapper: update then start OpenClaw
 │   ├── cron_update_proxy.sh   # Daily noon update cron target
 │   ├── post_deploy_self_check.sh # Service + proxy chain checks
