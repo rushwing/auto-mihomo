@@ -401,6 +401,52 @@ _wizard_new_key() {
     fi
 }
 
+mask_openclaw_user_unit() {
+    local svc_user="$1"
+    local user_home="$2"
+    local user_config_dir="${user_home}/.config"
+    local user_systemd_dir="${user_config_dir}/systemd"
+    local user_unit_dir="${user_systemd_dir}/user"
+    local user_unit="${user_unit_dir}/openclaw-gateway.service"
+    local backup=""
+    local user_uid=""
+    local runtime_dir=""
+
+    if [[ "${AUTO_MIHOMO_MASK_OPENCLAW_USER_UNIT:-1}" == "0" ]]; then
+        info "跳过 mask openclaw user unit (AUTO_MIHOMO_MASK_OPENCLAW_USER_UNIT=0)"
+        return 0
+    fi
+
+    install -d -m 755 -o "$svc_user" -g "$svc_user" "$user_config_dir" "$user_systemd_dir" "$user_unit_dir"
+
+    if [[ -L "$user_unit" ]] && [[ "$(readlink "$user_unit")" == "/dev/null" ]]; then
+        info "openclaw user unit 已是 masked"
+    else
+        if [[ -e "$user_unit" || -L "$user_unit" ]]; then
+            backup="${user_unit}.pre-mask.$(date +%Y%m%d-%H%M%S).bak"
+            mv "$user_unit" "$backup"
+            chown "$svc_user:$svc_user" "$backup" 2>/dev/null || true
+            info "已备份 user unit → $backup"
+        fi
+        ln -sfn /dev/null "$user_unit"
+        chown -h "$svc_user:$svc_user" "$user_unit" 2>/dev/null || true
+        ok "已 mask openclaw user unit → $user_unit"
+    fi
+
+    user_uid=$(id -u "$svc_user" 2>/dev/null || true)
+    runtime_dir="/run/user/${user_uid}"
+    if [[ -n "$user_uid" && -S "${runtime_dir}/bus" ]]; then
+        sudo -u "$svc_user" \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+            systemctl --user disable --now openclaw-gateway.service >/dev/null 2>&1 || true
+        sudo -u "$svc_user" \
+            XDG_RUNTIME_DIR="$runtime_dir" \
+            DBUS_SESSION_BUS_ADDRESS="unix:path=${runtime_dir}/bus" \
+            systemctl --user daemon-reload >/dev/null 2>&1 || true
+    fi
+}
+
 # =============================================================================
 # 安装 systemd 服务文件 (复用 install.sh 中的 sed 替换逻辑)
 # =============================================================================
@@ -487,6 +533,7 @@ except Exception:
     sudo systemctl enable mihomo auto-mihomo-mcp 2>/dev/null || true
     if [[ "$INSTALL_OPENCLAW_GW" == "true" ]]; then
         sudo systemctl enable openclaw-gateway 2>/dev/null || true
+        mask_openclaw_user_unit "$svc_user" "$user_home"
     fi
 }
 
