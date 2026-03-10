@@ -11,16 +11,25 @@ WorkingDirectory=__HOME__/.openclaw
 # 从 auto-mihomo 统一管理的代理配置读取 (端口变更自动生效)
 EnvironmentFile=/etc/auto-mihomo/proxy.env
 
-# Node.js 内置 fetch (undici) 不读取 HTTP_PROXY 环境变量,
-# 通过 proxy-bootstrap.cjs 预加载 undici ProxyAgent (零外部依赖)
 Environment="HOME=__HOME__"
-Environment="OPENCLAW_APP_DIR=__HOME__/.openclaw"
+Environment="TMPDIR=/tmp"
 Environment="PATH=__NODE_DIR__:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-Environment="NODE_OPTIONS=-r __PROJECT_DIR__/scripts/proxy-bootstrap.cjs"
+Environment="OPENCLAW_GATEWAY_PORT=18789"
+Environment="OPENCLAW_SYSTEMD_UNIT=openclaw-gateway.service"
+Environment="OPENCLAW_WINDOWS_TASK_NAME=OpenClaw Gateway"
+Environment="OPENCLAW_SERVICE_MARKER=openclaw"
+Environment="OPENCLAW_SERVICE_KIND=gateway"
+Environment="OPENCLAW_SERVICE_VERSION=__OPENCLAW_SERVICE_VERSION__"
+Environment="OPENCLAW_STATE_DIR=__HOME__/.openclaw"
+Environment="OPENCLAW_CONFIG_PATH=__HOME__/.openclaw/openclaw.json"
 
 ExecStart=__PROJECT_DIR__/scripts/start_openclaw_with_proxy.sh
 Restart=always
 RestartSec=5
+TimeoutStopSec=30
+TimeoutStartSec=30
+SuccessExitStatus=0 143
+KillMode=control-group
 
 [Install]
 WantedBy=multi-user.target

@@ -3,8 +3,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-OPENCLAW_MJS="${OPENCLAW_MJS:-$HOME/.openclaw/openclaw.mjs}"
-OPENCLAW_APP_DIR="${OPENCLAW_APP_DIR:-$(dirname "$OPENCLAW_MJS")}"
+OPENCLAW_APP_DIR="${OPENCLAW_APP_DIR:-$HOME/.openclaw}"
+OPENCLAW_PORT="${OPENCLAW_GATEWAY_PORT:-18789}"
 LOG_FILE="${PROJECT_DIR}/openclaw-startup.log"
 
 log() {
@@ -16,25 +16,40 @@ log_warn() {
     echo "[auto-mihomo] WARN: $*" >&2
 }
 
+log_error() {
+    log "ERROR: $*"
+    echo "[auto-mihomo] ERROR: $*" >&2
+}
+
 has_stale_requires_unit() {
     command -v systemctl >/dev/null 2>&1 || return 1
     systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Requires=.*\bmihomo\.service\b'
 }
 
-openclaw_has_undici() {
-    command -v node >/dev/null 2>&1 || return 1
-    node -e '
-const path = require("path");
-const { createRequire } = require("module");
-const appDir = process.argv[1];
-try {
-  const req = createRequire(path.join(appDir, "package.json"));
-  req.resolve("undici");
-  process.exit(0);
-} catch {
-  process.exit(1);
+reload_proxy_env() {
+    local proxy_env="/etc/auto-mihomo/proxy.env"
+    if [[ ! -f "$proxy_env" ]]; then
+        return 0
+    fi
+    set -a
+    # shellcheck source=/dev/null
+    source "$proxy_env"
+    set +a
+    log "startup: sourced ${proxy_env}"
 }
-' "$OPENCLAW_APP_DIR" >/dev/null 2>&1
+
+resolve_openclaw_entry() {
+    local candidate=""
+
+    for candidate in \
+        "${OPENCLAW_ENTRY:-}" \
+        "${OPENCLAW_MJS:-}" \
+        "${OPENCLAW_APP_DIR}/dist/index.js" \
+        "${OPENCLAW_APP_DIR}/openclaw.mjs"; do
+        [[ -n "$candidate" && -f "$candidate" ]] && printf '%s\n' "$candidate" && return 0
+    done
+
+    return 1
 }
 
 cd "$PROJECT_DIR"
@@ -51,19 +66,7 @@ else
     fi
 fi
 
-if ! openclaw_has_undici; then
-    log_warn "undici not found under ${OPENCLAW_APP_DIR}; proxy-bootstrap.cjs may not patch fetch()"
-    log_warn "install it with: cd ${OPENCLAW_APP_DIR} && pnpm add undici"
-fi
-
-# systemd 已通过 EnvironmentFile 注入代理环境，这里额外 source 以兼容子进程环境。
-if [[ -f /etc/profile.d/proxy.sh ]]; then
-    # shellcheck source=/dev/null
-    source /etc/profile.d/proxy.sh
-    log "startup: sourced /etc/profile.d/proxy.sh"
-fi
-
-log "startup: exec openclaw gateway"
+reload_proxy_env
 
 # Resolve the node binary: systemd PATH may not include nvm's bin dir.
 # install.sh injects the correct PATH via Environment=; this fallback
@@ -89,5 +92,14 @@ _find_node() {
 }
 
 NODE_BIN=$(_find_node) || { log "startup: ERROR: node not found in PATH or ~/.nvm"; exit 1; }
+OPENCLAW_ENTRY=$(resolve_openclaw_entry) || {
+    log_error "cannot find OpenClaw entrypoint under ${OPENCLAW_APP_DIR}"
+    exit 1
+}
+
+cd "$OPENCLAW_APP_DIR"
 log "startup: node → ${NODE_BIN}"
-exec "$NODE_BIN" "$OPENCLAW_MJS" gateway
+log "startup: entry → ${OPENCLAW_ENTRY}"
+log "startup: cwd → ${OPENCLAW_APP_DIR}"
+log "startup: exec openclaw gateway --port ${OPENCLAW_PORT}"
+exec "$NODE_BIN" "$OPENCLAW_ENTRY" gateway --port "$OPENCLAW_PORT"
