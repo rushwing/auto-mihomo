@@ -4,6 +4,9 @@ After=network-online.target mihomo.service
 Wants=network-online.target mihomo.service
 
 [Service]
+# 本模板面向 system 级常驻部署；install.sh / upgrade.sh 会额外 mask
+# ${HOME}/.config/systemd/user/openclaw-gateway.service，避免官方 CLI fallback 到
+# systemctl --user 时拉起第二个 gateway 并抢占 18789 端口。
 Type=simple
 User=__USER__
 WorkingDirectory=__HOME__/.openclaw
