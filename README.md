@@ -366,6 +366,8 @@ The drop-in adds three things to the base unit:
 
 `install.sh` / `upgrade.sh` install the drop-in automatically when `~/.openclaw` is detected. No manual step is needed. The base unit is **never** installed, enabled, or modified by auto-mihomo.
 
+To avoid duplicate gateways on port `18789`, the scripts also mask `$USER_HOME/.config/systemd/user/openclaw-gateway.service` by default so the upstream OpenClaw CLI cannot silently re-enable a conflicting `systemctl --user` instance. Set `AUTO_MIHOMO_MASK_OPENCLAW_USER_UNIT=0` if you intentionally want to keep the user unit path available.
+
 **First-time setup:** if `openclaw-gateway.service` does not exist yet on the system, run `openclaw onboard --install-daemon` after `install.sh` to register the base unit, then `sudo systemctl daemon-reload && sudo systemctl start openclaw-gateway`.
 
 **Upgrading from an older auto-mihomo:** if `/etc/systemd/system/openclaw-gateway.service` still exists from a previous install (it used `start_openclaw_with_proxy.sh` as `ExecStart`), `upgrade.sh` will print a migration guide. Clean it up manually:
@@ -474,13 +476,19 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 
 ## Changelog
 
+### v1.2.2
+
+- **OpenClaw drop-in 迁移** — auto-mihomo 不再自带完整 `openclaw-gateway.service`，而是改为给 OpenClaw 自管的 base unit 安装 `10-auto-mihomo.conf` drop-in，注入代理环境、`proxy-bootstrap.cjs` 和 `update_sub.sh` 预启动流程
+- **OpenClaw system/user 冲突防护** — `install.sh` / `upgrade.sh` 在安装 drop-in 后，会默认 mask `$USER_HOME/.config/systemd/user/openclaw-gateway.service`，避免 OpenClaw 官方 CLI fallback 到 `systemctl --user` 时再次拉起冲突实例并抢占 18789 端口
+- **可控回退开关** — 如需保留 user unit 路径，可显式设置 `AUTO_MIHOMO_MASK_OPENCLAW_USER_UNIT=0`
+
 ### v1.1.0
 
 - **`upgrade.sh`** — new upgrade wizard: stops services, backs up current install, runs interactive `.env` migration (detects added/removed keys, prompts for `MIHOMO_SUB_URL` / `MIHOMO_API_SECRET` / `MCP_API_TOKEN`), deploys new files, updates systemd units, restarts services, and runs post-deploy self-check
 - **Single entry point** — both `install.sh` and `upgrade.sh` detect whether an existing installation is present and redirect to the appropriate script, so either can be run without knowing the current state
 - **Hot reload fix** — `PUT /configs` changed to `PUT /configs?force=true`; Mihomo v1.19.x requires the `force` query parameter to accept a reload of a running config, fixing the HTTP 400 that previously caused every startup to fall back to a full service restart
 - **Restart loop fix** — `openclaw-gateway.service` changed from `Requires=mihomo.service` to `Wants=mihomo.service`; `Requires=` caused a cascade-stop of OpenClaw whenever Mihomo restarted, which re-ran `update_sub.sh`, which tried to reload again — infinite loop
-- **OpenClaw binary path fix** — `install.sh` and `upgrade.sh` now detect OpenClaw via `~/.openclaw/dist/index.js` first, with `~/.openclaw/openclaw.mjs` as legacy fallback
+- **OpenClaw binary path fix** — `install.sh` and `upgrade.sh` now detect OpenClaw via `$USER_HOME/.openclaw/dist/index.js` first, with `$USER_HOME/.openclaw/openclaw.mjs` as legacy fallback
 
 ### v1.0.2
 
