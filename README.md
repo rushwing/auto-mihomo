@@ -105,9 +105,9 @@ sudo bash auto-mihomo/upgrade.sh       # stops services, migrates .env, deploys,
 nano /opt/auto-mihomo/.env
 
 # 2. Run the first update (as service user)
-sudo -u openclaw bash /opt/auto-mihomo/scripts/update_sub.sh
+sudo -u openclaw bash /opt/auto-mihomo/scripts/update_sub.sh --probe-strategy=best
 
-# 3. Start services (OpenClaw gateway will run update_sub.sh first via wrapper)
+# 3. Optional: start extra services only if you need them
 sudo systemctl start auto-mihomo-mcp
 sudo systemctl start openclaw-gateway
 
@@ -115,6 +115,7 @@ sudo systemctl start openclaw-gateway
 source /etc/profile.d/proxy.sh
 
 # 5. Run post-deploy self-check
+#    (stopped MCP/OpenClaw services are reported as warnings and skipped)
 bash /opt/auto-mihomo/scripts/post_deploy_self_check.sh
 ```
 
@@ -475,6 +476,11 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 | x86_64 (amd64) | Intel/AMD servers | `--arch amd64` |
 
 ## Changelog
+
+### v1.2.3
+
+- **自检脚本降噪** - `post_deploy_self_check.sh` 现在只把 `mihomo` 视为必需服务；未启动的 `auto-mihomo-mcp` / `openclaw-gateway` 会记为告警并跳过对应 API 检查，适合只使用订阅更新和 shell 代理的场景
+- **安装后示例更新** - README 的首次更新命令改为 `--probe-strategy=best`，并明确 MCP / OpenClaw 服务是按需启动
 
 ### v1.2.2
 

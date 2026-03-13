@@ -24,6 +24,9 @@ pass() { printf '[PASS] %s\n' "$*"; }
 fail() { printf '[FAIL] %s\n' "$*"; }
 
 FAILED=0
+MIHOMO_ACTIVE=0
+MCP_ACTIVE=0
+OPENCLAW_ACTIVE=0
 
 if [[ ! -f "$ENV_FILE" ]]; then
     fail ".env 不存在: $ENV_FILE"
@@ -43,13 +46,35 @@ MCP_SERVER_HOST="$(read_env_value MCP_SERVER_HOST "$ENV_FILE" || true)"
 MCP_SERVER_HOST="${MCP_SERVER_HOST:-127.0.0.1}"
 MCP_API_TOKEN="$(read_env_value MCP_API_TOKEN "$ENV_FILE" || true)"
 
-check_service_active() {
+mark_service_state() {
+    local var_name="$1"
+    local value="$2"
+    printf -v "$var_name" '%s' "$value"
+}
+
+check_required_service() {
     local svc="$1"
+    local state_var="$2"
     if systemctl is-active --quiet "$svc"; then
         pass "systemd 服务运行中: $svc"
+        mark_service_state "$state_var" 1
     else
         fail "systemd 服务未运行: $svc"
+        mark_service_state "$state_var" 0
         FAILED=1
+    fi
+}
+
+check_optional_service() {
+    local svc="$1"
+    local state_var="$2"
+    local desc="$3"
+    if systemctl is-active --quiet "$svc"; then
+        pass "systemd 服务运行中: $svc"
+        mark_service_state "$state_var" 1
+    else
+        warn "systemd 服务未运行: $svc (${desc}, 跳过相关检查)"
+        mark_service_state "$state_var" 0
     fi
 }
 
@@ -125,11 +150,11 @@ check_proxy_target() {
 info "开始部署后自检 (project=${PROJECT_DIR})"
 
 info "1) 检查关键服务"
-check_service_active "mihomo"
-check_service_active "auto-mihomo-mcp"
+check_required_service "mihomo" "MIHOMO_ACTIVE"
+check_optional_service "auto-mihomo-mcp" "MCP_ACTIVE" "MCP API 可按需启用"
 _OC_DROPIN="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
 if [[ -f "$_OC_DROPIN" || -f /etc/systemd/system/openclaw-gateway.service ]]; then
-    check_service_active "openclaw-gateway"
+    check_optional_service "openclaw-gateway" "OPENCLAW_ACTIVE" "OpenClaw gateway 可按需启用"
 else
     info "openclaw-gateway: 未安装, 跳过"
 fi
@@ -141,19 +166,31 @@ MIHOMO_HEADERS=()
 if [[ -n "$MIHOMO_API_SECRET" ]]; then
     MIHOMO_HEADERS+=( -H "Authorization: Bearer ${MIHOMO_API_SECRET}" )
 fi
-check_local_api "Mihomo /version" "http://${MIHOMO_CONTROLLER_HOST}:${MIHOMO_API_PORT}/version" "${MIHOMO_HEADERS[@]}"
+if [[ "$MIHOMO_ACTIVE" -eq 1 ]]; then
+    check_local_api "Mihomo /version" "http://${MIHOMO_CONTROLLER_HOST}:${MIHOMO_API_PORT}/version" "${MIHOMO_HEADERS[@]}"
+else
+    warn "Mihomo 未运行, 跳过本地 API 检查"
+fi
 
 MCP_HEADERS=()
 if [[ -n "$MCP_API_TOKEN" ]]; then
     MCP_HEADERS+=( -H "Authorization: Bearer ${MCP_API_TOKEN}" )
 fi
-check_local_api "MCP /mcp/health" "http://${MCP_SERVER_HOST}:${MCP_SERVER_PORT}/mcp/health" "${MCP_HEADERS[@]}"
+if [[ "$MCP_ACTIVE" -eq 1 ]]; then
+    check_local_api "MCP /mcp/health" "http://${MCP_SERVER_HOST}:${MCP_SERVER_PORT}/mcp/health" "${MCP_HEADERS[@]}"
+else
+    warn "auto-mihomo-mcp 未运行, 跳过 MCP API 检查"
+fi
 
 info "3) 检查代理链路 (通过 Mihomo mixed-port=${MIXED_PORT})"
-check_proxy_target "Google 204" "http://www.gstatic.com/generate_204" "期望 204"
-check_proxy_target "Google 首页" "https://www.google.com" "常见 200/301/302"
-check_proxy_target "GitHub" "https://github.com" "常见 200/301/302"
-check_proxy_target "Telegram API" "https://api.telegram.org" "常见 200/302/401/404"
+if [[ "$MIHOMO_ACTIVE" -eq 1 ]]; then
+    check_proxy_target "Google 204" "http://www.gstatic.com/generate_204" "期望 204"
+    check_proxy_target "Google 首页" "https://www.google.com" "常见 200/301/302"
+    check_proxy_target "GitHub" "https://github.com" "常见 200/301/302"
+    check_proxy_target "Telegram API" "https://api.telegram.org" "常见 200/302/401/404"
+else
+    warn "Mihomo 未运行, 跳过代理链路检查"
+fi
 
 info "4) 检查 OpenClaw gateway drop-in 兼容性"
 _OC_DROPIN="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
