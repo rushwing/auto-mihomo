@@ -54,22 +54,33 @@ check_service_active() {
 }
 
 check_openclaw_unit_safety() {
-    if [[ ! -f /etc/systemd/system/openclaw-gateway.service ]]; then
-        info "openclaw-gateway unit: 未安装, 跳过防呆检查"
+    local dropin="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
+    local base_unit="/etc/systemd/system/openclaw-gateway.service"
+
+    if [[ ! -f "$dropin" && ! -f "$base_unit" ]]; then
+        info "openclaw-gateway: 未安装, 跳过防呆检查"
         return
     fi
 
+    # 防呆: 旧版全量 unit 使用 Requires= 会导致重启循环
     if systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Requires=.*\bmihomo\.service\b'; then
-        fail "检测到旧版 openclaw-gateway unit 使用 Requires=mihomo.service (会导致重启循环)"
+        fail "检测到 openclaw-gateway unit 使用 Requires=mihomo.service (会导致重启循环)"
         echo "      处理方式: 重新执行 install.sh/upgrade.sh 后运行 sudo systemctl daemon-reload"
         FAILED=1
         return
     fi
 
-    if systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Wants=.*\bmihomo\.service\b'; then
+    # drop-in 模式: Wants= 来自 drop-in
+    if [[ -f "$dropin" ]]; then
+        if grep -Eq '^Wants=.*mihomo\.service' "$dropin"; then
+            pass "openclaw-gateway drop-in 依赖关系正确 (Wants=mihomo.service)"
+        else
+            warn "openclaw-gateway drop-in 缺少 Wants=mihomo.service"
+        fi
+    elif systemctl cat openclaw-gateway 2>/dev/null | grep -Eq '^[[:space:]]*Wants=.*\bmihomo\.service\b'; then
         pass "openclaw-gateway unit 依赖关系正确 (Wants=mihomo.service)"
     else
-        warn "未在 openclaw-gateway 生效 unit 中发现 Wants=mihomo.service，请确认模板已更新"
+        warn "未在 openclaw-gateway 生效 unit 中发现 Wants=mihomo.service"
     fi
 }
 
@@ -116,11 +127,13 @@ info "开始部署后自检 (project=${PROJECT_DIR})"
 info "1) 检查关键服务"
 check_service_active "mihomo"
 check_service_active "auto-mihomo-mcp"
-if [[ -f /etc/systemd/system/openclaw-gateway.service ]]; then
+_OC_DROPIN="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
+if [[ -f "$_OC_DROPIN" || -f /etc/systemd/system/openclaw-gateway.service ]]; then
     check_service_active "openclaw-gateway"
 else
     info "openclaw-gateway: 未安装, 跳过"
 fi
+unset _OC_DROPIN
 check_openclaw_unit_safety
 
 info "2) 检查本地监听接口"
@@ -142,21 +155,32 @@ check_proxy_target "Google 首页" "https://www.google.com" "常见 200/301/302"
 check_proxy_target "GitHub" "https://github.com" "常见 200/301/302"
 check_proxy_target "Telegram API" "https://api.telegram.org" "常见 200/302/401/404"
 
-info "4) 检查 OpenClaw gateway unit 兼容性"
-if [[ ! -f /etc/systemd/system/openclaw-gateway.service ]]; then
-    info "openclaw-gateway 未安装, 跳过 unit 检查"
-else
-    unit_dump="$(systemctl cat openclaw-gateway 2>/dev/null || true)"
-    if echo "$unit_dump" | grep -q "proxy-bootstrap.cjs"; then
-        warn "openclaw-gateway unit 仍在注入 proxy-bootstrap.cjs，建议重新运行 upgrade.sh"
-    elif echo "$unit_dump" | grep -q "OPENCLAW_SERVICE_KIND=gateway" \
-        && echo "$unit_dump" | grep -q "OPENCLAW_STATE_DIR=" \
-        && echo "$unit_dump" | grep -q "OPENCLAW_CONFIG_PATH="; then
-        pass "openclaw-gateway unit 已切换到新版环境变量模型"
+info "4) 检查 OpenClaw gateway drop-in 兼容性"
+_OC_DROPIN="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
+_OC_BASE="/etc/systemd/system/openclaw-gateway.service"
+if [[ -f "$_OC_DROPIN" ]]; then
+    if grep -q "proxy-bootstrap.cjs" "$_OC_DROPIN"; then
+        pass "openclaw-gateway drop-in 已注入 proxy-bootstrap.cjs"
     else
-        warn "openclaw-gateway unit 缺少新版 OpenClaw 服务元数据，请确认已更新"
+        warn "openclaw-gateway drop-in 未找到 proxy-bootstrap.cjs 注入"
     fi
+    if grep -q "EnvironmentFile=/etc/auto-mihomo/proxy.env" "$_OC_DROPIN"; then
+        pass "openclaw-gateway drop-in 已配置代理 EnvironmentFile"
+    else
+        warn "openclaw-gateway drop-in 未找到 EnvironmentFile=/etc/auto-mihomo/proxy.env"
+    fi
+    if [[ -f "$_OC_BASE" ]] && grep -q "start_openclaw_with_proxy.sh" "$_OC_BASE" 2>/dev/null; then
+        warn "检测到旧版全量 unit (${_OC_BASE}), 建议完成迁移:"
+        echo "  1) sudo rm ${_OC_BASE}"
+        echo "  2) openclaw onboard --install-daemon"
+        echo "  3) sudo systemctl daemon-reload && sudo systemctl start openclaw-gateway"
+    fi
+elif [[ -f "$_OC_BASE" ]]; then
+    warn "openclaw-gateway 使用旧版全量 unit, 建议运行 upgrade.sh 迁移到 drop-in 模式"
+else
+    info "openclaw-gateway drop-in 未安装, 跳过兼容性检查"
 fi
+unset _OC_DROPIN _OC_BASE
 
 if [[ "$FAILED" -ne 0 ]]; then
     echo

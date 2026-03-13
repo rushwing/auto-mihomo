@@ -143,7 +143,17 @@ detect_install_dir() {
         fi
     fi
 
-    # 从 openclaw-gateway.service 的 ExecStart= 推断
+    # 从 openclaw-gateway drop-in 的 ExecStartPre= 推断 (新版)
+    local dropin="/etc/systemd/system/openclaw-gateway.service.d/10-auto-mihomo.conf"
+    if [[ -f "$dropin" ]]; then
+        detected=$(grep -m1 '^ExecStartPre=' "$dropin" \
+            | sed 's|ExecStartPre=-\?bash \(.*\)/scripts/.*|\1|' | xargs 2>/dev/null || true)
+        if [[ -n "$detected" && -d "$detected" ]]; then
+            echo "$detected"; return
+        fi
+    fi
+
+    # 兼容旧版: 从 openclaw-gateway.service 的 ExecStart= 推断
     if [[ -f /etc/systemd/system/openclaw-gateway.service ]]; then
         detected=$(grep -m1 '^ExecStart=' /etc/systemd/system/openclaw-gateway.service \
             | sed 's|ExecStart=\(.*\)/scripts/.*|\1|' | xargs 2>/dev/null || true)
@@ -477,25 +487,16 @@ install_systemd_services() {
         | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
     ok "auto-mihomo-mcp.service"
 
-    # openclaw-gateway.service (兼容新版 dist/index.js 和旧版 openclaw.mjs)
+    # openclaw-gateway drop-in (仅注入代理环境和订阅更新预启动任务)
+    # Base unit 由 OpenClaw 自身管理 (openclaw onboard --install-daemon)
     local openclaw_app_dir="${user_home}/.openclaw"
-    local openclaw_entry=""
-    if [[ -f "${openclaw_app_dir}/dist/index.js" ]]; then
-        openclaw_entry="${openclaw_app_dir}/dist/index.js"
-    elif [[ -f "${openclaw_app_dir}/openclaw.mjs" ]]; then
-        openclaw_entry="${openclaw_app_dir}/openclaw.mjs"
-    fi
-    if [[ -n "$openclaw_entry" ]]; then
-        local openclaw_service_version="unknown"
-        if [[ -f "${openclaw_app_dir}/package.json" ]]; then
-            openclaw_service_version=$(python3 -c '
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        print(json.load(fh).get("version") or "unknown")
-except Exception:
-    print("unknown")
-' "${openclaw_app_dir}/package.json")
+    local dropin_dir="/etc/systemd/system/openclaw-gateway.service.d"
+    if [[ -d "$openclaw_app_dir" ]]; then
+        # 迁移检测: 旧版全量 unit 由 auto-mihomo 安装时含 start_openclaw_with_proxy.sh
+        if [[ -f /etc/systemd/system/openclaw-gateway.service ]] && \
+           grep -q "start_openclaw_with_proxy.sh" /etc/systemd/system/openclaw-gateway.service 2>/dev/null; then
+            warn "检测到旧版 auto-mihomo 全量 unit — 迁移说明见升级完成后提示"
+            MIGRATE_OLD_UNIT=true
         fi
 
         # 解析 Node.js 可执行文件路径 (systemd PATH 中没有 nvm bin dir)
@@ -514,25 +515,23 @@ except Exception:
         info "Node.js: ${_node_bin:-未找到} → PATH 注入: ${node_dir}"
         unset _node_bin _p
 
+        sudo mkdir -p "$dropin_dir"
         sed \
-            -e "s|__USER__|${svc_user}|g" \
-            -e "s|__HOME__|${user_home}|g" \
             -e "s|__PROJECT_DIR__|${install_dir}|g" \
             -e "s|__NODE_DIR__|${node_dir}|g" \
-            -e "s|__OPENCLAW_SERVICE_VERSION__|${openclaw_service_version}|g" \
-            "${install_dir}/systemd/openclaw-gateway.service" \
-            | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
-        ok "openclaw-gateway.service"
+            "${install_dir}/systemd/openclaw-gateway.service.d/10-auto-mihomo.conf" \
+            | sudo tee "${dropin_dir}/10-auto-mihomo.conf" > /dev/null
+        ok "openclaw-gateway.service.d/10-auto-mihomo.conf (drop-in)"
         INSTALL_OPENCLAW_GW=true
     else
-        info "openclaw 未检测到, 跳过 openclaw-gateway.service"
+        info "openclaw 未检测到, 跳过 openclaw-gateway drop-in"
         INSTALL_OPENCLAW_GW=false
     fi
 
     sudo systemctl daemon-reload
     sudo systemctl enable mihomo auto-mihomo-mcp 2>/dev/null || true
+    # openclaw-gateway enablement is managed by OpenClaw (openclaw onboard --install-daemon)
     if [[ "$INSTALL_OPENCLAW_GW" == "true" ]]; then
-        sudo systemctl enable openclaw-gateway 2>/dev/null || true
         mask_openclaw_user_unit "$svc_user" "$user_home"
     fi
 }
@@ -775,6 +774,7 @@ main() {
     step "[6/7] 更新 systemd 服务"
 
     INSTALL_OPENCLAW_GW=false
+    MIGRATE_OLD_UNIT=false
     install_systemd_services "$INSTALL_DIR" "$SERVICE_USER" "$USER_HOME"
     ok "systemd daemon 已重载"
 
@@ -792,8 +792,26 @@ main() {
     sleep 1
 
     if [[ "$INSTALL_OPENCLAW_GW" == "true" ]]; then
-        systemctl start openclaw-gateway
-        ok "openclaw-gateway 已启动"
+        if systemctl is-active --quiet openclaw-gateway 2>/dev/null; then
+            systemctl restart openclaw-gateway
+            ok "openclaw-gateway 已重启 (drop-in 已生效)"
+        elif systemctl list-unit-files openclaw-gateway.service &>/dev/null 2>&1 \
+             && systemctl cat openclaw-gateway &>/dev/null 2>&1; then
+            systemctl start openclaw-gateway
+            ok "openclaw-gateway 已启动"
+        else
+            warn "openclaw-gateway base unit 未注册 — drop-in 已就位"
+            echo "  请运行: openclaw onboard --install-daemon"
+        fi
+    fi
+    if [[ "$MIGRATE_OLD_UNIT" == "true" ]]; then
+        echo ""
+        warn "旧版全量 unit 仍存在: /etc/systemd/system/openclaw-gateway.service"
+        echo "  迁移到 drop-in 模式后可手动清理旧 unit:"
+        echo "  1) sudo systemctl stop openclaw-gateway"
+        echo "  2) sudo rm /etc/systemd/system/openclaw-gateway.service"
+        echo "  3) openclaw onboard --install-daemon  # 让 OpenClaw 重装 base unit"
+        echo "  4) sudo systemctl daemon-reload && sudo systemctl start openclaw-gateway"
     fi
 
     # =========================================================================

@@ -314,28 +314,14 @@ sed \
     "${INSTALL_DIR}/systemd/auto-mihomo-mcp.service" \
     | sudo tee /etc/systemd/system/auto-mihomo-mcp.service > /dev/null
 
-# 处理 openclaw-gateway.service (仅当检测到新版/旧版 OpenClaw 入口时安装)
+# 安装 openclaw-gateway drop-in (仅当检测到 OpenClaw 应用目录时)
+# Base unit 由 OpenClaw 自身管理 (openclaw onboard --install-daemon)
 OPENCLAW_APP_DIR="${USER_HOME}/.openclaw"
-OPENCLAW_ENTRY=""
-if [[ -f "${OPENCLAW_APP_DIR}/dist/index.js" ]]; then
-    OPENCLAW_ENTRY="${OPENCLAW_APP_DIR}/dist/index.js"
-elif [[ -f "${OPENCLAW_APP_DIR}/openclaw.mjs" ]]; then
-    OPENCLAW_ENTRY="${OPENCLAW_APP_DIR}/openclaw.mjs"
-fi
-if [[ -n "$OPENCLAW_ENTRY" ]]; then
-    echo "  检测到 openclaw: ${OPENCLAW_ENTRY}"
+DROPIN_DIR="/etc/systemd/system/openclaw-gateway.service.d"
+INSTALL_OPENCLAW_GW=false
 
-    OPENCLAW_SERVICE_VERSION="unknown"
-    if [[ -f "${OPENCLAW_APP_DIR}/package.json" ]]; then
-        OPENCLAW_SERVICE_VERSION=$(python3 -c '
-import json, sys
-try:
-    with open(sys.argv[1], encoding="utf-8") as fh:
-        print(json.load(fh).get("version") or "unknown")
-except Exception:
-    print("unknown")
-' "${OPENCLAW_APP_DIR}/package.json")
-    fi
+if [[ -d "$OPENCLAW_APP_DIR" ]]; then
+    echo "  检测到 OpenClaw: ${OPENCLAW_APP_DIR}"
 
     # 解析 Node.js 可执行文件路径, 优先使用 nvm (systemd PATH 中没有 nvm bin dir)
     _node_bin=""
@@ -356,25 +342,33 @@ except Exception:
     echo "  Node.js: ${_node_bin:-未找到, 使用默认路径} → PATH 注入: ${NODE_DIR}"
     unset _node_bin _p
 
+    sudo mkdir -p "$DROPIN_DIR"
     sed \
-        -e "s|__USER__|${CURRENT_USER}|g" \
-        -e "s|__HOME__|${USER_HOME}|g" \
         -e "s|__PROJECT_DIR__|${INSTALL_DIR}|g" \
         -e "s|__NODE_DIR__|${NODE_DIR}|g" \
-        -e "s|__OPENCLAW_SERVICE_VERSION__|${OPENCLAW_SERVICE_VERSION}|g" \
-        "${INSTALL_DIR}/systemd/openclaw-gateway.service" \
-        | sudo tee /etc/systemd/system/openclaw-gateway.service > /dev/null
+        "${INSTALL_DIR}/systemd/openclaw-gateway.service.d/10-auto-mihomo.conf" \
+        | sudo tee "${DROPIN_DIR}/10-auto-mihomo.conf" > /dev/null
+    echo "  drop-in 已安装: ${DROPIN_DIR}/10-auto-mihomo.conf"
     INSTALL_OPENCLAW_GW=true
 else
-    echo "  跳过 openclaw-gateway.service (未检测到 ${OPENCLAW_APP_DIR}/dist/index.js 或 openclaw.mjs)"
-    INSTALL_OPENCLAW_GW=false
+    echo "  跳过 openclaw-gateway drop-in (未检测到 ${OPENCLAW_APP_DIR})"
 fi
 
 sudo systemctl daemon-reload
 sudo systemctl enable mihomo
 sudo systemctl enable auto-mihomo-mcp
 if [[ "$INSTALL_OPENCLAW_GW" == "true" ]]; then
-    sudo systemctl enable openclaw-gateway
+    # openclaw-gateway 由 OpenClaw 自身管理; 按当前状态决定操作
+    if systemctl is-active --quiet openclaw-gateway 2>/dev/null; then
+        sudo systemctl restart openclaw-gateway
+        echo "  openclaw-gateway 已重启 (drop-in 已生效)"
+    elif systemctl list-unit-files openclaw-gateway.service &>/dev/null 2>&1 \
+         && systemctl cat openclaw-gateway &>/dev/null 2>&1; then
+        sudo systemctl start openclaw-gateway
+        echo "  openclaw-gateway 已启动"
+    else
+        echo "  提示: openclaw-gateway base unit 未注册, 请运行: openclaw onboard --install-daemon"
+    fi
     mask_openclaw_user_unit "$CURRENT_USER" "$USER_HOME"
 fi
 echo "  systemd 服务已安装并设为开机启动"
