@@ -205,6 +205,40 @@ echo "[4/7] 安装 Mihomo..."
 sudo mkdir -p "$MIHOMO_HOME"
 sudo chown "${CURRENT_USER}:${CURRENT_USER}" "$MIHOMO_HOME"
 
+# 在停止已运行服务前完成在线下载与完整性校验，避免下载失败导致旧服务不可用。
+MIHOMO_DOWNLOADED=""
+if [[ "$OFFLINE" != "true" || ! -f "${VENDOR_DIR}/mihomo" ]]; then
+    echo "  在线下载 Mihomo ${MIHOMO_VERSION} (${MIHOMO_ARCH})..."
+    MIHOMO_FILENAME="mihomo-${MIHOMO_ARCH}-${MIHOMO_VERSION}.gz"
+    MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${MIHOMO_FILENAME}"
+    MIHOMO_ARCHIVE=$(mktemp "${MIHOMO_HOME}/mihomo.gz.XXXXXX")
+    MIHOMO_DOWNLOADED=$(mktemp "${MIHOMO_HOME}/mihomo.new.XXXXXX")
+
+    if ! curl --fail --show-error --location \
+        --retry 3 --retry-delay 2 --retry-connrefused \
+        --connect-timeout 15 --max-time 300 \
+        --output "$MIHOMO_ARCHIVE" "$MIHOMO_URL"; then
+        rm -f "$MIHOMO_ARCHIVE" "$MIHOMO_DOWNLOADED"
+        echo "  错误: Mihomo 下载失败: ${MIHOMO_URL}" >&2
+        exit 1
+    fi
+
+    if ! gzip -t "$MIHOMO_ARCHIVE" 2>/dev/null; then
+        rm -f "$MIHOMO_ARCHIVE" "$MIHOMO_DOWNLOADED"
+        echo "  错误: Mihomo 压缩包不完整或格式无效" >&2
+        exit 1
+    fi
+
+    gunzip -c "$MIHOMO_ARCHIVE" > "$MIHOMO_DOWNLOADED"
+    rm -f "$MIHOMO_ARCHIVE"
+    if [[ ! -s "$MIHOMO_DOWNLOADED" ]]; then
+        rm -f "$MIHOMO_DOWNLOADED"
+        echo "  错误: Mihomo 解压后文件为空" >&2
+        exit 1
+    fi
+    chmod +x "$MIHOMO_DOWNLOADED"
+fi
+
 # 停止正在运行的 mihomo (Linux 不允许覆盖运行中的二进制: "Text file busy")
 MIHOMO_WAS_RUNNING=false
 if command -v systemctl &>/dev/null && systemctl is-active --quiet mihomo 2>/dev/null; then
@@ -223,16 +257,10 @@ if [[ "$OFFLINE" == "true" && -f "${VENDOR_DIR}/mihomo" ]]; then
     cp "${VENDOR_DIR}/mihomo" "${MIHOMO_HOME}/mihomo"
     chmod +x "${MIHOMO_HOME}/mihomo"
 else
-    echo "  在线下载 Mihomo ${MIHOMO_VERSION} (${MIHOMO_ARCH})..."
-    MIHOMO_FILENAME="mihomo-${MIHOMO_ARCH}-${MIHOMO_VERSION}.gz"
-    MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/${MIHOMO_FILENAME}"
-
     if [[ -f "${MIHOMO_HOME}/mihomo" ]]; then
         mv "${MIHOMO_HOME}/mihomo" "${MIHOMO_HOME}/mihomo.bak"
     fi
-
-    curl -sL "$MIHOMO_URL" | gunzip > "${MIHOMO_HOME}/mihomo"
-    chmod +x "${MIHOMO_HOME}/mihomo"
+    mv "$MIHOMO_DOWNLOADED" "${MIHOMO_HOME}/mihomo"
 fi
 echo "  Mihomo 已安装: ${MIHOMO_HOME}/mihomo"
 echo "  版本: $(${MIHOMO_HOME}/mihomo -v 2>/dev/null || echo '未知')"

@@ -485,6 +485,7 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 
 - Change preferred probe regions from Taiwan/Japan to Taiwan/United States for more reliable node selection
 - Make `build_package.sh` detect macOS/Linux automatically and select `gtar` or GNU `tar` accordingly
+- Make Mihomo downloads fail on HTTP errors, retry transient failures, and verify gzip integrity before replacing the binary
 
 ### v1.3.0
 
