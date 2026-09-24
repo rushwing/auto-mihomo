@@ -453,7 +453,7 @@ It verifies:
 
 ## Build Package
 
-`build_package.sh` creates a self-contained tarball for offline deployment:
+`build_package.sh` creates a self-contained tarball for offline deployment. It supports both macOS and Linux: macOS uses Homebrew `gtar` (installed automatically when Homebrew is available), while Linux uses the system GNU `tar`.
 
 ```bash
 bash build_package.sh                    # ARM64 (Pi 5)
@@ -484,6 +484,7 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 ### v1.3.1
 
 - Change preferred probe regions from Taiwan/Japan to Taiwan/United States for more reliable node selection
+- Make `build_package.sh` detect macOS/Linux automatically and select `gtar` or GNU `tar` accordingly
 
 ### v1.3.0
 
