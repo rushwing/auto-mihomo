@@ -684,7 +684,13 @@ main() {
     chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/upgrade.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/scripts/proxy-run" 2>/dev/null || true
     ln -sfn "${MIHOMO_HOME}/config.yaml" "${INSTALL_DIR}/config.yaml" 2>/dev/null || true
+
+    # proxy-run 放到 PATH, 方便按命令显式走代理 (默认网络仍是 DIRECT)
+    if [[ -f "${INSTALL_DIR}/scripts/proxy-run" ]]; then
+        sudo install -m 755 "${INSTALL_DIR}/scripts/proxy-run" /usr/local/bin/proxy-run
+    fi
 
     # ---- 更新 Mihomo 二进制 (离线包) ----
     VENDOR_DIR="${NEW_PKG_DIR}/vendor"

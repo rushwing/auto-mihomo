@@ -25,7 +25,8 @@ Any standard Clash / Clash Meta (Mihomo) YAML subscription URL is supported. The
 - **HTTP probe node selection** — select nodes using real HTTP traffic through Mihomo mixed-port (not only raw TCP connect)
 - **Config generation** — produces a complete Mihomo config with DNS, proxy groups, and GeoIP rules
 - **Hot reload** — applies new config via Mihomo REST API without restarting the process
-- **System proxy** — writes `/etc/profile.d/proxy.sh` so all shell tools (git, curl, apt) use the proxy
+- **Process-level proxy** — writes `/etc/auto-mihomo/proxy.env` for systemd services; login shells stay DIRECT unless `AUTO_MIHOMO_SYSTEM_PROXY=1` is set
+- **Per-command proxy** — `proxy-run <cmd>` routes a single command through Mihomo without touching the shell's own environment
 - **MCP HTTP API** — REST endpoints for OpenClaw or other systems to trigger updates and switch nodes
 - **Scheduled updates** — cron job runs daily at 12:00 (Beijing time / `Asia/Shanghai`)
 - **Offline deployment** — build a self-contained tarball on a dev machine, deploy to a Pi with no internet
@@ -114,8 +115,9 @@ nano /opt/auto-mihomo/.env
 sudo systemctl start auto-mihomo-mcp
 sudo systemctl start openclaw-gateway
 
-# 4. Optional: activate proxy in current shell (for manual curl/git/apt)
-source /opt/auto-mihomo/auto_mihomo.sh --current
+# 4. Optional: route single commands through Mihomo (shell itself stays DIRECT)
+proxy-run curl -I https://www.google.com
+proxy-run git clone https://github.com/xxx/yyy.git
 
 # 5. Run post-deploy self-check
 #    (stopped MCP/OpenClaw services are reported as warnings and skipped)
@@ -152,6 +154,7 @@ auto-mihomo/
 │   ├── proxy-bootstrap.cjs    # Preloaded via NODE_OPTIONS to set undici EnvHttpProxyAgent
 │   ├── start_openclaw_with_proxy.sh # Wrapper: update then start OpenClaw
 │   ├── cron_update_proxy.sh   # Daily noon update cron target
+│   ├── proxy-run              # Per-command proxy wrapper (installed to /usr/local/bin)
 │   ├── post_deploy_self_check.sh # Service + proxy chain checks
 │   ├── generate_secrets.sh    # Generate MIHOMO/MCP secrets
 │   ├── sync_secrets_to_1password.sh # Sync .env secrets to 1Password
@@ -293,7 +296,7 @@ curl http://localhost:8900/mcp/health \
 3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config (written to Mihomo workdir, e.g. `/opt/mihomo/config.yaml`): DNS (fake-ip + DoH, localhost-bound in `process-proxy` mode), proxy groups, GeoIP rules, controller host/secret
 4. **Reload** — first tries Mihomo's `PUT /configs?force=true` API (with Bearer secret if configured); falls back to `systemctl restart`; falls back to direct `nohup` start
 5. **HTTP Probe Select** — iterates nodes sequentially: switches each node via Mihomo API, then sends a real HTTP request through the local mixed-port; picks the lowest-latency responsive node and reloads config with it as default. This step is skipped when a node is forced with `--set`.
-6. **Proxy (process-proxy mode)** — writes environment variables to `/etc/profile.d/proxy.sh` and `/etc/auto-mihomo/proxy.env`
+6. **Proxy (process-proxy mode)** — always writes `/etc/auto-mihomo/proxy.env` for systemd services; `/etc/profile.d/proxy.sh` is written only when `AUTO_MIHOMO_SYSTEM_PROXY=1` is set, so login shells stay DIRECT by default
 7. **Verify** — tests connectivity through the proxy via `MIHOMO_HTTP_PROBE_URL`
 
 ### Service user and privilege model
@@ -310,7 +313,7 @@ This sets ownership on all required paths and configures sudoers/systemd accordi
 |---|---|
 | Reload config | Mihomo REST API (no root) |
 | Restart service | `sudoers NOPASSWD` for `systemctl {start,stop,restart} mihomo` only |
-| Write proxy.sh | File pre-created and chowned to service user by `install.sh` |
+| Write proxy.sh | File pre-created and chowned to service user by `install.sh`; only written when `AUTO_MIHOMO_SYSTEM_PROXY=1` |
 | Write proxy.env | `/etc/auto-mihomo/` directory chowned to service user by `install.sh` |
 | Bind network ports | systemd `AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_ADMIN CAP_NET_RAW` |
 
@@ -321,7 +324,7 @@ Paths owned by the service user:
 | `/opt/auto-mihomo` | Project directory (scripts, config, logs) |
 | `/opt/mihomo` | Mihomo binary and GeoIP data |
 | `/etc/auto-mihomo/` | Proxy environment files for systemd services |
-| `/etc/profile.d/proxy.sh` | Proxy environment for login shells |
+| `/etc/profile.d/proxy.sh` | Proxy environment for login shells (opt-in via `AUTO_MIHOMO_SYSTEM_PROXY=1`) |
 
 ### Generated proxy groups
 
@@ -340,6 +343,39 @@ GEOIP,CN       → DIRECT
 GEOSITE,google/github/twitter/telegram/youtube → Proxy
 MATCH          → Proxy
 ```
+
+## Using the proxy from a shell
+
+The host network stays DIRECT by default. Mihomo is an opt-in dependency, so a Mihomo outage can never take SSH, Tailscale, or plain direct traffic down with it:
+
+```
+login shell / SSH / Tailscale   → DIRECT
+proxy-run <cmd>                 → 127.0.0.1:7893 → Mihomo → Proxy
+systemd service (proxy.env)     → 127.0.0.1:7893 → Mihomo → Proxy
+```
+
+Route a single command through Mihomo:
+
+```bash
+proxy-run curl https://www.google.com
+proxy-run git clone https://github.com/xxx/yyy.git
+proxy-run npm install -g xxx
+proxy-run pip install xxx
+```
+
+`proxy-run` only sets the proxy variables for the child process, so the shell afterwards is still DIRECT. Override the endpoint with `AUTO_MIHOMO_PROXY_URL` / `AUTO_MIHOMO_SOCKS_URL` (default `http://127.0.0.1:7893` / `socks5://127.0.0.1:7893`).
+
+To opt into the old global login-shell proxy instead:
+
+```bash
+AUTO_MIHOMO_SYSTEM_PROXY=1 bash scripts/update_sub.sh
+```
+
+Notes:
+
+- Tools that ignore `HTTP_PROXY` / `HTTPS_PROXY` need their own proxy flag.
+- Some tools need SOCKS; `proxy-run` exports `ALL_PROXY` as well.
+- `github.com` over DIRECT can be unstable on some uplinks — prefer `proxy-run git ...`.
 
 ## Scheduled Updates
 
