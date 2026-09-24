@@ -11,10 +11,11 @@ TW-
 (TW)
 [TW]
 
-# 日本 (LLM API 延迟低且稳定)
-日本
-Japan
- JP
-JP-
-(JP)
-[JP]
+# 美国 (LLM API 可用性高且稳定)
+美国
+United States
+USA
+ US
+US-
+(US)
+[US]

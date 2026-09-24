@@ -481,6 +481,10 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 
 ## Changelog
 
+### v1.3.1
+
+- Change preferred probe regions from Taiwan/Japan to Taiwan/United States for more reliable node selection
+
 ### v1.3.0
 
 - Add `auto_mihomo.sh` as a one-command entry point for best-node probing, forced node selection, and current-shell proxy activation
