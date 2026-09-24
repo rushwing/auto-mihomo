@@ -79,22 +79,47 @@ esac
 # Python 版本号 (去掉点: 3.13 -> 313)
 PY_VER_SHORT="${PYTHON_VERSION//./}"
 
-# ===== 前置依赖检查 =====
-# GNU tar (macOS BSD tar 会写入 ._* 扩展属性文件)
-if ! command -v gtar &>/dev/null; then
-    if command -v brew &>/dev/null; then
-        echo "安装 GNU tar..."
-        brew install gnu-tar
-    else
-        echo "错误: 需要 GNU tar (gtar), 请先安装 Homebrew 后运行: brew install gnu-tar"
+# ===== 主机平台和前置依赖检查 =====
+HOST_PLATFORM=$(uname -s)
+case "$HOST_PLATFORM" in
+    Darwin)
+        # macOS 自带 BSD tar; 使用 Homebrew GNU tar 避免写入 ._* 扩展属性文件。
+        if ! command -v gtar &>/dev/null; then
+            if command -v brew &>/dev/null; then
+                echo "未检测到 GNU tar, 正在通过 Homebrew 安装..."
+                brew install gnu-tar
+            else
+                echo "错误: macOS 需要 GNU tar (gtar)"
+                echo "请先安装 Homebrew, 再运行: brew install gnu-tar"
+                exit 1
+            fi
+        fi
+        TAR_CMD="gtar"
+        ;;
+    Linux)
+        # Debian/Ubuntu 等 Linux 发行版的 tar 默认为 GNU tar。
+        if ! command -v tar &>/dev/null; then
+            echo "错误: Linux 上未找到 tar, 请先安装 tar 软件包"
+            exit 1
+        fi
+        if ! tar --version 2>/dev/null | head -1 | grep -q 'GNU tar'; then
+            echo "错误: Linux 构建需要 GNU tar, 当前 tar 不是 GNU 实现"
+            exit 1
+        fi
+        TAR_CMD="tar"
+        ;;
+    *)
+        echo "错误: 不支持的构建平台: ${HOST_PLATFORM}"
+        echo "支持的平台: macOS (Darwin), Linux"
         exit 1
-    fi
-fi
+        ;;
+esac
 
 echo "============================================"
 echo "  Auto-Mihomo 构建部署包"
 echo "============================================"
 echo "  项目版本:     ${APP_VERSION} (${GIT_HASH})"
+echo "  构建平台:     ${HOST_PLATFORM} (${TAR_CMD})"
 echo "  目标架构:     ${TARGET_ARCH} (${MIHOMO_ARCH})"
 echo "  Mihomo 版本:  ${MIHOMO_VERSION}"
 echo "  Python 版本:  ${PYTHON_VERSION}"
@@ -147,8 +172,8 @@ echo "  完成"
 # ===== 4. 下载 uv (目标架构) =====
 echo "[4/5] 下载 uv (${UV_ARCH})..."
 UV_URL="https://github.com/astral-sh/uv/releases/latest/download/uv-${UV_ARCH}.tar.gz"
-curl -sL "$UV_URL" | tar xz -C "${VENDOR_DIR}/" --strip-components=1 uv-${UV_ARCH}/uv uv-${UV_ARCH}/uvx 2>/dev/null || \
-curl -sL "$UV_URL" | tar xz -C "${VENDOR_DIR}/" --strip-components=1
+curl -sL "$UV_URL" | "$TAR_CMD" xz -C "${VENDOR_DIR}/" --strip-components=1 uv-${UV_ARCH}/uv uv-${UV_ARCH}/uvx 2>/dev/null || \
+curl -sL "$UV_URL" | "$TAR_CMD" xz -C "${VENDOR_DIR}/" --strip-components=1
 # 只保留 uv 和 uvx 二进制
 find "${VENDOR_DIR}" -maxdepth 1 -type f ! -name 'uv' ! -name 'uvx' ! -name 'mihomo' ! -name '*.dat' ! -name '*.mmdb' -delete 2>/dev/null || true
 chmod +x "${VENDOR_DIR}/uv" "${VENDOR_DIR}/uvx" 2>/dev/null || true
@@ -233,8 +258,8 @@ DIST_DIR="${PROJECT_DIR}/dist"
 mkdir -p "$DIST_DIR"
 TARBALL="${DIST_DIR}/auto-mihomo-${APP_VERSION}-${TARGET_ARCH}-${GIT_HASH}.tar.gz"
 
-# gtar 在前置检查中已确保安装
-gtar -czf "$TARBALL" -C "$BUILD_DIR" auto-mihomo
+# macOS 使用 gtar, Linux 使用系统 GNU tar。
+"$TAR_CMD" -czf "$TARBALL" -C "$BUILD_DIR" auto-mihomo
 
 # ===== 输出摘要 =====
 TARBALL_SIZE=$(ls -lh "$TARBALL" | awk '{print $5}')
