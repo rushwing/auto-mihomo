@@ -12,6 +12,7 @@
 # 用法:
 #   bash scripts/update_sub.sh
 #   bash scripts/update_sub.sh --skip-proxy   # 跳过系统代理设置
+#   bash scripts/update_sub.sh --set "美国F"     # 强制使用指定节点
 # =============================================================================
 set -euo pipefail
 
@@ -50,14 +51,42 @@ CONFIG_FILE="${MIHOMO_HOME}/config.yaml"
 LOG_FILE="${PROJECT_DIR}/update.log"
 
 SKIP_PROXY=false
+FORCED_NODE=""
 # PROBE_STRATEGY: first-success = stop at first passing node (fast, for startup/restart)
 #                 best          = probe all candidates, pick lowest HTTP latency (for cron)
 PROBE_STRATEGY="first-success"
-for _arg in "$@"; do
-    [[ "$_arg" == "--skip-proxy" ]]          && SKIP_PROXY=true
-    [[ "$_arg" == "--probe-strategy=best" ]] && PROBE_STRATEGY="best"
+while (( $# > 0 )); do
+    case "$1" in
+        --skip-proxy)
+            SKIP_PROXY=true
+            shift
+            ;;
+        --probe-strategy=best)
+            PROBE_STRATEGY="best"
+            shift
+            ;;
+        --set)
+            if (( $# < 2 )) || [[ -z "$2" ]]; then
+                echo "错误: --set 需要一个非空节点名称" >&2
+                exit 2
+            fi
+            FORCED_NODE="$2"
+            shift 2
+            ;;
+        --set=*)
+            FORCED_NODE="${1#--set=}"
+            if [[ -z "$FORCED_NODE" ]]; then
+                echo "错误: --set 需要一个非空节点名称" >&2
+                exit 2
+            fi
+            shift
+            ;;
+        *)
+            echo "错误: 未知参数: $1" >&2
+            exit 2
+            ;;
+    esac
 done
-unset _arg
 
 # ===== 日志 =====
 log() {
@@ -160,6 +189,20 @@ if not proxies:
     sys.exit(1)
 print(proxies[0].get('name', ''))
 "
+}
+
+validate_forced_node() {
+    local node_name="$1"
+    python3 - "$SUB_FILE" "$node_name" <<'PY'
+import sys
+import yaml
+
+with open(sys.argv[1], encoding="utf-8") as f:
+    data = yaml.safe_load(f) or {}
+
+if sys.argv[2] not in {p.get("name") for p in data.get("proxies", []) or []}:
+    sys.exit(1)
+PY
 }
 
 # ===== 2b. 检查节点是否在排除列表中 =====
@@ -538,8 +581,17 @@ main() {
 
     # Step 2: 选一个临时节点生成配置 (真实选优在 Mihomo 启动后进行 HTTP 探测)
     local best_node
-    best_node=$(get_first_node_name) || { log_error "无法读取订阅中的首个节点, 中止"; exit 1; }
-    log_info "临时默认节点: ${best_node}"
+    if [[ -n "$FORCED_NODE" ]]; then
+        if ! validate_forced_node "$FORCED_NODE"; then
+            log_error "指定节点不存在于当前订阅: ${FORCED_NODE}"
+            exit 1
+        fi
+        best_node="$FORCED_NODE"
+        log_info "强制使用指定节点: ${best_node}"
+    else
+        best_node=$(get_first_node_name) || { log_error "无法读取订阅中的首个节点, 中止"; exit 1; }
+        log_info "临时默认节点: ${best_node}"
+    fi
 
     # Step 3: 生成配置
     generate_config "$best_node" || { log_error "生成配置失败, 中止"; exit 1; }
@@ -549,7 +601,9 @@ main() {
 
     # Step 5: TCP 并发预筛选 + HTTP 探测重新选优
     local tcp_shortlist=""
-    if [[ "$PROXY_MODE" == "process-proxy" ]]; then
+    if [[ -n "$FORCED_NODE" ]]; then
+        log_info "已指定节点, 跳过自动探测选优"
+    elif [[ "$PROXY_MODE" == "process-proxy" ]]; then
         tcp_shortlist=$(tcp_prefilter_nodes) || true
         if [[ -n "$tcp_shortlist" ]]; then
             local shortlist_count
@@ -572,13 +626,15 @@ main() {
         fi
     fi
 
-    local probed_best_node=""
-    probed_best_node=$(probe_and_select_best_node "$tcp_shortlist") || true
-    if [[ -n "$probed_best_node" && "$probed_best_node" != "$best_node" ]]; then
-        log_info "应用 HTTP 探测结果并重载配置: ${best_node} -> ${probed_best_node}"
-        generate_config "$probed_best_node" || { log_error "重新生成配置失败, 中止"; exit 1; }
-        reload_mihomo || { log_error "应用 HTTP 探测结果失败, 中止"; exit 1; }
-        best_node="$probed_best_node"
+    if [[ -z "$FORCED_NODE" ]]; then
+        local probed_best_node=""
+        probed_best_node=$(probe_and_select_best_node "$tcp_shortlist") || true
+        if [[ -n "$probed_best_node" && "$probed_best_node" != "$best_node" ]]; then
+            log_info "应用 HTTP 探测结果并重载配置: ${best_node} -> ${probed_best_node}"
+            generate_config "$probed_best_node" || { log_error "重新生成配置失败, 中止"; exit 1; }
+            reload_mihomo || { log_error "应用 HTTP 探测结果失败, 中止"; exit 1; }
+            best_node="$probed_best_node"
+        fi
     fi
 
     # Step 6: 设置系统代理

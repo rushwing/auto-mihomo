@@ -16,14 +16,14 @@
 #   bash build_package.sh                    # 默认 ARM64 (树莓派5)
 #   bash build_package.sh --arch armv7       # 树莓派3/4 32位
 #   bash build_package.sh --arch amd64       # x86_64
-#   bash build_package.sh --mihomo v1.19.0   # 指定 Mihomo 版本
+#   bash build_package.sh --mihomo v1.19.31  # 指定 Mihomo 版本
 #   bash build_package.sh --py 3.12          # 指定 Python 版本
 # =============================================================================
 set -euo pipefail
 
 # ===== 默认配置 =====
 TARGET_ARCH="arm64"
-MIHOMO_VERSION="v1.19.20"
+MIHOMO_VERSION="v1.19.31"
 PYTHON_VERSION="3.13"
 PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
