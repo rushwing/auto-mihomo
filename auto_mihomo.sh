@@ -10,7 +10,7 @@ fi
 INSTALL_DIR="${AUTO_MIHOMO_INSTALL_DIR:-/opt/auto-mihomo}"
 UPDATE_SCRIPT="${INSTALL_DIR}/scripts/update_sub.sh"
 SERVICE_USER="${AUTO_MIHOMO_SERVICE_USER:-openclaw}"
-PROXY_FILE="${AUTO_MIHOMO_PROXY_FILE:-/etc/profile.d/proxy.sh}"
+PROXY_FILE="${AUTO_MIHOMO_PROXY_FILE:-/etc/auto-mihomo/proxy.env}"
 
 usage() {
     cat <<'EOF'
@@ -48,8 +48,27 @@ apply_current_proxy() {
         return 2
     fi
 
+    if ! grep -qE '^(http_proxy|HTTP_PROXY)=' "$PROXY_FILE"; then
+        echo "错误: 代理环境文件不包含 HTTP 代理: ${PROXY_FILE}" >&2
+        return 1
+    fi
+
+    local restore_allexport=false
+    if [[ "$-" != *a* ]]; then
+        set -a
+        restore_allexport=true
+    fi
     # shellcheck source=/dev/null
-    source "$PROXY_FILE"
+    if ! source "$PROXY_FILE"; then
+        if [[ "$restore_allexport" == "true" ]]; then
+            set +a
+        fi
+        echo "错误: 加载代理环境失败: ${PROXY_FILE}" >&2
+        return 1
+    fi
+    if [[ "$restore_allexport" == "true" ]]; then
+        set +a
+    fi
     echo "当前 shell 已应用 Auto-Mihomo 代理: ${http_proxy:-${HTTP_PROXY:-}}"
 }
 

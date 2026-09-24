@@ -413,9 +413,21 @@ echo ""
 echo "预创建代理环境文件..."
 
 # /etc/profile.d/proxy.sh — 登录 shell 用 (bash/zsh)
-sudo touch /etc/profile.d/proxy.sh
-sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/profile.d/proxy.sh
-sudo chmod 644 /etc/profile.d/proxy.sh
+if [[ ! -e /etc/profile.d/proxy.sh ]]; then
+    sudo install -o "$CURRENT_USER" -g "$CURRENT_USER" -m 644 /dev/null /etc/profile.d/proxy.sh
+fi
+_proxy_status=0
+bash "${INSTALL_DIR}/scripts/manage_login_proxy.sh" disable /etc/profile.d/proxy.sh \
+    || _proxy_status=$?
+case "$_proxy_status" in
+    0)
+        sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/profile.d/proxy.sh
+        sudo chmod 644 /etc/profile.d/proxy.sh
+        ;;
+    2) echo "  警告: 无法禁用 login-shell 全局代理" ;;
+    3) echo "  保留非 Auto-Mihomo 管理的 /etc/profile.d/proxy.sh (内容和所有权均不变)" ;;
+    *) echo "  警告: 清理 login-shell 代理失败 (退出码=${_proxy_status})" ;;
+esac
 echo "  /etc/profile.d/proxy.sh (登录 shell)"
 
 # /etc/auto-mihomo/proxy.env — systemd 服务用 (EnvironmentFile=)

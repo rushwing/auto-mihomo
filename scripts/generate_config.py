@@ -40,6 +40,7 @@ def build_config(
     controller_host: str,
     api_secret: str,
     proxy_mode: str,
+    probe_url: str,
 ) -> dict:
     """
     构建完整的 Mihomo 配置
@@ -52,6 +53,7 @@ def build_config(
         controller_host: Mihomo external-controller 监听地址
         api_secret: Mihomo REST API Bearer secret (空字符串 = 不鉴权)
         proxy_mode: process-proxy 或 gateway-proxy
+        probe_url: Auto/Fallback 组共用的 HTTPS 健康检查 URL
     """
     proxy_names = [p["name"] for p in proxies]
 
@@ -132,7 +134,7 @@ def build_config(
                 "name": "Auto",
                 "type": "url-test",
                 "proxies": proxy_names,
-                "url": "http://www.gstatic.com/generate_204",
+                "url": probe_url,
                 "interval": 300,
                 "tolerance": 50,
             },
@@ -140,7 +142,7 @@ def build_config(
                 "name": "Fallback",
                 "type": "fallback",
                 "proxies": ordered_names,
-                "url": "http://www.gstatic.com/generate_204",
+                "url": probe_url,
                 "interval": 300,
             },
         ],
@@ -219,6 +221,11 @@ def main():
         default="process-proxy",
         help="代理模式: process-proxy(默认)/gateway-proxy",
     )
+    parser.add_argument(
+        "--probe-url",
+        default="https://www.gstatic.com/generate_204",
+        help="Auto/Fallback 组的 HTTPS 健康检查 URL",
+    )
     args = parser.parse_args()
 
     proxies = load_proxies(args.subscription)
@@ -241,6 +248,7 @@ def main():
         args.controller_host,
         args.api_secret,
         args.proxy_mode,
+        args.probe_url,
     )
     write_config(config, args.output)
 

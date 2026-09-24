@@ -203,7 +203,8 @@ nano .env
 | `MIHOMO_CONTROLLER_HOST` | `127.0.0.1` | Mihomo controller listen host (recommended localhost only) |
 | `MIHOMO_API_SECRET` | `CHANGE_ME...` | Mihomo REST API Bearer secret |
 | `AUTO_MIHOMO_PROXY_MODE` | `process-proxy` | `process-proxy` (OpenClaw/service proxy); `gateway-proxy` (transparent LAN gateway — DNS and proxy bind to all interfaces) |
-| `MIHOMO_HTTP_PROBE_URL` | `http://www.gstatic.com/generate_204` | HTTP probe URL used for node selection via the local mixed-port |
+| `AUTO_MIHOMO_SYSTEM_PROXY` | `0` | `0`: login shells stay DIRECT; `1`: persistently write proxy exports to `/etc/profile.d/proxy.sh` |
+| `MIHOMO_HTTP_PROBE_URL` | `https://www.gstatic.com/generate_204` | HTTPS probe URL shared by node selection and generated Auto/Fallback groups |
 | `MIHOMO_HTTP_PROBE_TIMEOUT` | `12` | Probe timeout in seconds |
 | `MCP_SERVER_PORT` | `8900` | MCP HTTP server port |
 | `MCP_SERVER_HOST` | `127.0.0.1` | MCP listen host (recommended localhost only) |
@@ -365,11 +366,13 @@ proxy-run pip install xxx
 
 `proxy-run` only sets the proxy variables for the child process, so the shell afterwards is still DIRECT. Override the endpoint with `AUTO_MIHOMO_PROXY_URL` / `AUTO_MIHOMO_SOCKS_URL` (default `http://127.0.0.1:7893` / `socks5://127.0.0.1:7893`).
 
-To opt into the old global login-shell proxy instead:
+To persistently opt into the old global login-shell proxy, set this in `/opt/auto-mihomo/.env`:
 
 ```bash
-AUTO_MIHOMO_SYSTEM_PROXY=1 bash scripts/update_sub.sh
+AUTO_MIHOMO_SYSTEM_PROXY=1
 ```
+
+Then run `bash scripts/update_sub.sh`. Setting the value in `.env` ensures cron and service-triggered updates preserve the same policy. With the default value `0`, upgrades remove only the old Auto-Mihomo-managed exports; unrelated user-owned content is left untouched.
 
 Notes:
 
@@ -516,6 +519,14 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 | x86_64 (amd64) | Intel/AMD servers | `--arch amd64` |
 
 ## Changelog
+
+### v1.4.0
+
+- Keep login shells DIRECT by default and provide `proxy-run` for explicit per-command proxying
+- Safely migrate only Auto-Mihomo-managed `/etc/profile.d/proxy.sh` files while preserving user-owned content
+- Load `--current` from the process-level proxy environment without leaving shell options modified
+- Use one configurable HTTPS probe URL for subscription selection and generated Auto/Fallback groups
+- Remove unreachable overseas DNS fallback resolvers from the default CN-oriented configuration
 
 ### v1.3.1
 
