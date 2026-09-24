@@ -156,7 +156,28 @@ echo "  完成"
 # ===== 2. 下载 Mihomo 二进制 =====
 echo "[2/5] 下载 Mihomo ${MIHOMO_VERSION} (${MIHOMO_ARCH})..."
 MIHOMO_URL="https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION}/mihomo-${MIHOMO_ARCH}-${MIHOMO_VERSION}.gz"
-curl -sL "$MIHOMO_URL" | gunzip > "${VENDOR_DIR}/mihomo"
+MIHOMO_ARCHIVE="${BUILD_DIR}/mihomo.gz"
+MIHOMO_TMP="${VENDOR_DIR}/mihomo.tmp"
+
+if ! curl --fail --show-error --location \
+    --retry 3 --retry-delay 2 --retry-connrefused \
+    --connect-timeout 15 --max-time 300 \
+    --output "$MIHOMO_ARCHIVE" "$MIHOMO_URL"; then
+    echo "错误: Mihomo 下载失败: ${MIHOMO_URL}" >&2
+    exit 1
+fi
+
+if ! gzip -t "$MIHOMO_ARCHIVE" 2>/dev/null; then
+    echo "错误: Mihomo 压缩包不完整或格式无效: ${MIHOMO_ARCHIVE}" >&2
+    exit 1
+fi
+
+gunzip -c "$MIHOMO_ARCHIVE" > "$MIHOMO_TMP"
+if [[ ! -s "$MIHOMO_TMP" ]]; then
+    echo "错误: Mihomo 解压后文件为空" >&2
+    exit 1
+fi
+mv "$MIHOMO_TMP" "${VENDOR_DIR}/mihomo"
 chmod +x "${VENDOR_DIR}/mihomo"
 echo "  $(ls -lh "${VENDOR_DIR}/mihomo" | awk '{print $5}') — ${VENDOR_DIR}/mihomo"
 
