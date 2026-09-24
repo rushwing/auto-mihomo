@@ -495,12 +495,16 @@ setup_proxy() {
     # 此处直接写入, 无需 sudo
     local proxy_file="/etc/profile.d/proxy.sh"
 
-    if [[ ! -w "$proxy_file" ]]; then
-        log_warn "${proxy_file} 不可写, 跳过系统代理 (请运行 install.sh 修复权限)"
-        return 0
-    fi
-
-    cat > "$proxy_file" <<PROXY_EOF
+    # Login-shell 全局代理默认关闭, 系统保持 DIRECT。
+    # 一旦写出 export HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, 所有 login shell
+    # (含 SSH 会话里的 git/curl/apt/npm) 都会依赖 mihomo 的 mixed-port;
+    # mihomo 未就绪时这些命令会一起失联。需要全局代理时显式 opt-in:
+    #   AUTO_MIHOMO_SYSTEM_PROXY=1 bash scripts/update_sub.sh
+    if [[ "${AUTO_MIHOMO_SYSTEM_PROXY:-0}" == "1" ]]; then
+        if [[ ! -w "$proxy_file" ]]; then
+            log_warn "${proxy_file} 不可写, 跳过 login-shell 代理写入 (请运行 install.sh 修复权限)"
+        else
+            cat > "$proxy_file" <<PROXY_EOF
 # Auto-Mihomo 系统代理配置 (自动生成, 请勿手动修改)
 export http_proxy="http://127.0.0.1:${MIXED_PORT}"
 export https_proxy="http://127.0.0.1:${MIXED_PORT}"
@@ -511,6 +515,13 @@ export ALL_PROXY="socks5://127.0.0.1:${MIXED_PORT}"
 export no_proxy="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 export NO_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
 PROXY_EOF
+            log_info "login-shell 全局代理已写入: ${proxy_file}"
+            log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
+        fi
+    else
+        log_info "保持 DIRECT: 未向 ${proxy_file} 注入全局代理变量"
+        log_info "如需全局代理: AUTO_MIHOMO_SYSTEM_PROXY=1 bash scripts/update_sub.sh"
+    fi
 
     # 同时写入 systemd 兼容格式 (无 export, 供 EnvironmentFile= 使用)
     local proxy_env="/etc/auto-mihomo/proxy.env"
@@ -536,8 +547,7 @@ SYSENV_EOF
         fi
     fi
 
-    log_info "系统代理已设置 (mixed-port: ${MIXED_PORT})"
-    log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
+    log_info "进程级代理已就绪 (systemd EnvironmentFile, mixed-port: ${MIXED_PORT})"
 }
 
 # ===== 7. 验证代理 =====
