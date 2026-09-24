@@ -112,18 +112,12 @@ def build_config(
                 "https://doh.pub/dns-query",
                 "https://dns.alidns.com/dns-query",
             ],
-            "fallback": [
-                "https://1.1.1.1/dns-query",
-                "https://dns.google/dns-query",
-                "tls://8.8.8.8:853",
-            ],
-            "fallback-filter": {
-                "geoip": True,
-                "geoip-code": "CN",
-                "ipcidr": [
-                    "240.0.0.0/4",
-                ],
-            },
+            # 注意: 不要配置 dns.fallback + fallback-filter。
+            # 一旦配置了 fallback, mihomo 在 fallback-filter 命中 (或需要复核) 时
+            # 必须拿到 fallback 响应, 否则会丢弃 nameserver 结果并返回
+            # "all DNS requests failed"。而 1.1.1.1 / dns.google / DoT 853 在
+            # 国内网络不可达, 会导致所有海外域名和代理节点域名解析失败。
+            # 上述 CN DoH 已返回未污染结果, 因此无需 fallback。
         },
         # ===== 代理节点 =====
         "proxies": proxies,
