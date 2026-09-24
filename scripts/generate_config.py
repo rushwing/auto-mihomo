@@ -40,6 +40,7 @@ def build_config(
     controller_host: str,
     api_secret: str,
     proxy_mode: str,
+    probe_url: str,
 ) -> dict:
     """
     构建完整的 Mihomo 配置
@@ -52,6 +53,7 @@ def build_config(
         controller_host: Mihomo external-controller 监听地址
         api_secret: Mihomo REST API Bearer secret (空字符串 = 不鉴权)
         proxy_mode: process-proxy 或 gateway-proxy
+        probe_url: Auto/Fallback 组共用的 HTTPS 健康检查 URL
     """
     proxy_names = [p["name"] for p in proxies]
 
@@ -112,18 +114,12 @@ def build_config(
                 "https://doh.pub/dns-query",
                 "https://dns.alidns.com/dns-query",
             ],
-            "fallback": [
-                "https://1.1.1.1/dns-query",
-                "https://dns.google/dns-query",
-                "tls://8.8.8.8:853",
-            ],
-            "fallback-filter": {
-                "geoip": True,
-                "geoip-code": "CN",
-                "ipcidr": [
-                    "240.0.0.0/4",
-                ],
-            },
+            # 注意: 不要配置 dns.fallback + fallback-filter。
+            # 一旦配置了 fallback, mihomo 在 fallback-filter 命中 (或需要复核) 时
+            # 必须拿到 fallback 响应, 否则会丢弃 nameserver 结果并返回
+            # "all DNS requests failed"。而 1.1.1.1 / dns.google / DoT 853 在
+            # 国内网络不可达, 会导致所有海外域名和代理节点域名解析失败。
+            # 上述 CN DoH 已返回未污染结果, 因此无需 fallback。
         },
         # ===== 代理节点 =====
         "proxies": proxies,
@@ -138,7 +134,7 @@ def build_config(
                 "name": "Auto",
                 "type": "url-test",
                 "proxies": proxy_names,
-                "url": "http://www.gstatic.com/generate_204",
+                "url": probe_url,
                 "interval": 300,
                 "tolerance": 50,
             },
@@ -146,7 +142,7 @@ def build_config(
                 "name": "Fallback",
                 "type": "fallback",
                 "proxies": ordered_names,
-                "url": "http://www.gstatic.com/generate_204",
+                "url": probe_url,
                 "interval": 300,
             },
         ],
@@ -225,6 +221,11 @@ def main():
         default="process-proxy",
         help="代理模式: process-proxy(默认)/gateway-proxy",
     )
+    parser.add_argument(
+        "--probe-url",
+        default="https://www.gstatic.com/generate_204",
+        help="Auto/Fallback 组的 HTTPS 健康检查 URL",
+    )
     args = parser.parse_args()
 
     proxies = load_proxies(args.subscription)
@@ -247,6 +248,7 @@ def main():
         args.controller_host,
         args.api_secret,
         args.proxy_mode,
+        args.probe_url,
     )
     write_config(config, args.output)
 

@@ -311,7 +311,12 @@ echo "  Python 依赖安装完成 (.venv)"
 
 # ===== 确保脚本可执行 =====
 chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/scripts/proxy-run" 2>/dev/null || true
 chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
+
+# proxy-run 放到 PATH, 方便按命令显式走代理 (默认网络仍是 DIRECT)
+sudo install -m 755 "${INSTALL_DIR}/scripts/proxy-run" /usr/local/bin/proxy-run
+echo "  /usr/local/bin/proxy-run"
 
 # ===== 设置项目目录权限 =====
 echo ""
@@ -408,9 +413,21 @@ echo ""
 echo "预创建代理环境文件..."
 
 # /etc/profile.d/proxy.sh — 登录 shell 用 (bash/zsh)
-sudo touch /etc/profile.d/proxy.sh
-sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/profile.d/proxy.sh
-sudo chmod 644 /etc/profile.d/proxy.sh
+if [[ ! -e /etc/profile.d/proxy.sh ]]; then
+    sudo install -o "$CURRENT_USER" -g "$CURRENT_USER" -m 644 /dev/null /etc/profile.d/proxy.sh
+fi
+_proxy_status=0
+bash "${INSTALL_DIR}/scripts/manage_login_proxy.sh" disable /etc/profile.d/proxy.sh \
+    || _proxy_status=$?
+case "$_proxy_status" in
+    0)
+        sudo chown "${CURRENT_USER}:${CURRENT_USER}" /etc/profile.d/proxy.sh
+        sudo chmod 644 /etc/profile.d/proxy.sh
+        ;;
+    2) echo "  警告: 无法禁用 login-shell 全局代理" ;;
+    3) echo "  保留非 Auto-Mihomo 管理的 /etc/profile.d/proxy.sh (内容和所有权均不变)" ;;
+    *) echo "  警告: 清理 login-shell 代理失败 (退出码=${_proxy_status})" ;;
+esac
 echo "  /etc/profile.d/proxy.sh (登录 shell)"
 
 # /etc/auto-mihomo/proxy.env — systemd 服务用 (EnvironmentFile=)
@@ -499,9 +516,9 @@ echo ""
 echo "  3. 启动 MCP 服务:"
 echo "     sudo systemctl start auto-mihomo-mcp"
 echo ""
-echo "  4. 验证代理:"
-echo "     source /etc/profile.d/proxy.sh"
-echo "     curl -I https://www.google.com"
+echo "  4. 验证代理 (默认网络保持 DIRECT, 按需显式走 Mihomo):"
+echo "     proxy-run curl -I https://www.google.com"
+echo "     proxy-run git clone https://github.com/xxx/yyy.git"
 echo ""
 echo "  5. 查看 MCP API 文档:"
 echo "     http://<树莓派IP>:8900/docs"

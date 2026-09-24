@@ -684,7 +684,28 @@ main() {
     chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/upgrade.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/scripts/proxy-run" 2>/dev/null || true
     ln -sfn "${MIHOMO_HOME}/config.yaml" "${INSTALL_DIR}/config.yaml" 2>/dev/null || true
+
+    # proxy-run 放到 PATH, 方便按命令显式走代理 (默认网络仍是 DIRECT)
+    if [[ -f "${INSTALL_DIR}/scripts/proxy-run" ]]; then
+        sudo install -m 755 "${INSTALL_DIR}/scripts/proxy-run" /usr/local/bin/proxy-run
+    fi
+
+    # 旧版默认向 profile.d 写入全局代理。升级时立即执行一次受控迁移，
+    # 避免要等到下一次 cron/update_sub 才恢复 DIRECT。
+    SYSTEM_PROXY_SETTING=$(read_env_value "AUTO_MIHOMO_SYSTEM_PROXY" "${INSTALL_DIR}/.env")
+    if [[ "$SYSTEM_PROXY_SETTING" != "1" ]]; then
+        _proxy_status=0
+        bash "${INSTALL_DIR}/scripts/manage_login_proxy.sh" disable /etc/profile.d/proxy.sh \
+            || _proxy_status=$?
+        case "$_proxy_status" in
+            0) ok "login-shell 已迁移为 DIRECT" ;;
+            2) warn "/etc/profile.d/proxy.sh 不可写, 无法清理旧代理" ;;
+            3) warn "/etc/profile.d/proxy.sh 非 Auto-Mihomo 管理, 已保留用户配置" ;;
+            *) warn "清理 login-shell 代理失败 (退出码=${_proxy_status})" ;;
+        esac
+    fi
 
     # ---- 更新 Mihomo 二进制 (离线包) ----
     VENDOR_DIR="${NEW_PKG_DIR}/vendor"

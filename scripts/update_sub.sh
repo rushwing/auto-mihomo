@@ -37,13 +37,14 @@ API_PORT="${MIHOMO_API_PORT:-9090}"
 API_HOST="${MIHOMO_CONTROLLER_HOST:-127.0.0.1}"
 API_SECRET="${MIHOMO_API_SECRET:-}"
 PROXY_MODE="${AUTO_MIHOMO_PROXY_MODE:-process-proxy}"
-HTTP_PROBE_URL="${MIHOMO_HTTP_PROBE_URL:-http://www.gstatic.com/generate_204}"
+HTTP_PROBE_URL="${MIHOMO_HTTP_PROBE_URL:-https://www.gstatic.com/generate_204}"
 HTTP_PROBE_TIMEOUT="${MIHOMO_HTTP_PROBE_TIMEOUT:-12}"
 MIHOMO_TEST_WORKERS="${MIHOMO_TEST_WORKERS:-50}"
 MIHOMO_PROBE_TOP_N="${MIHOMO_PROBE_TOP_N:-10}"
 LATENCY_THRESHOLD_MS="${MIHOMO_LATENCY_THRESHOLD_MS:-300}"
 EXCLUDE_LIST_FILE="${SCRIPT_DIR}/node_exclude_list.txt"
 FAVOURITE_LIST_FILE="${SCRIPT_DIR}/node_favourite_list.txt"
+LOGIN_PROXY_HELPER="${SCRIPT_DIR}/manage_login_proxy.sh"
 
 SUB_FILE="${PROJECT_DIR}/subscription.yaml"
 # Place generated config inside Mihomo workdir to avoid /configs path restrictions on newer Mihomo versions.
@@ -262,7 +263,8 @@ generate_config() {
         --api-port "$API_PORT" \
         --controller-host "$API_HOST" \
         --api-secret "$API_SECRET" \
-        --proxy-mode "$PROXY_MODE"
+        --proxy-mode "$PROXY_MODE" \
+        --probe-url "$HTTP_PROBE_URL"
 
     log_info "配置文件已生成: ${CONFIG_FILE}"
 
@@ -495,22 +497,41 @@ setup_proxy() {
     # 此处直接写入, 无需 sudo
     local proxy_file="/etc/profile.d/proxy.sh"
 
-    if [[ ! -w "$proxy_file" ]]; then
-        log_warn "${proxy_file} 不可写, 跳过系统代理 (请运行 install.sh 修复权限)"
-        return 0
+    # Login-shell 全局代理默认关闭, 系统保持 DIRECT。
+    # 一旦写出 export HTTP_PROXY/HTTPS_PROXY/ALL_PROXY, 所有 login shell
+    # (含 SSH 会话里的 git/curl/apt/npm) 都会依赖 mihomo 的 mixed-port;
+    # mihomo 未就绪时这些命令会一起失联。需要持久全局代理时,
+    # 在 .env 中设置 AUTO_MIHOMO_SYSTEM_PROXY=1。
+    if [[ "${AUTO_MIHOMO_SYSTEM_PROXY:-0}" == "1" ]]; then
+        local enable_status=0
+        bash "$LOGIN_PROXY_HELPER" enable "$proxy_file" "$MIXED_PORT" || enable_status=$?
+        if [[ "$enable_status" == "0" ]]; then
+            log_info "login-shell 全局代理已写入: ${proxy_file}"
+            log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
+        elif [[ "$enable_status" == "3" ]]; then
+            log_warn "${proxy_file} 不是 Auto-Mihomo 管理的文件, 为避免覆盖用户配置已保留"
+        else
+            log_warn "${proxy_file} 不可写, 跳过 login-shell 代理写入 (请运行 install.sh 修复权限)"
+        fi
+    else
+        local disable_status=0
+        bash "$LOGIN_PROXY_HELPER" disable "$proxy_file" || disable_status=$?
+        case "$disable_status" in
+            0)
+                log_info "保持 DIRECT: 已清理 ${proxy_file} 中的 Auto-Mihomo 全局代理"
+                ;;
+            2)
+                log_warn "${proxy_file} 不可写, 无法清理旧的 login-shell 代理"
+                ;;
+            3)
+                log_warn "${proxy_file} 不是 Auto-Mihomo 管理的文件, 为避免覆盖用户配置已保留"
+                ;;
+            *)
+                log_warn "清理 login-shell 代理失败 (退出码=${disable_status})"
+                ;;
+        esac
+        log_info "如需持久全局代理, 请在 .env 设置 AUTO_MIHOMO_SYSTEM_PROXY=1"
     fi
-
-    cat > "$proxy_file" <<PROXY_EOF
-# Auto-Mihomo 系统代理配置 (自动生成, 请勿手动修改)
-export http_proxy="http://127.0.0.1:${MIXED_PORT}"
-export https_proxy="http://127.0.0.1:${MIXED_PORT}"
-export all_proxy="socks5://127.0.0.1:${MIXED_PORT}"
-export HTTP_PROXY="http://127.0.0.1:${MIXED_PORT}"
-export HTTPS_PROXY="http://127.0.0.1:${MIXED_PORT}"
-export ALL_PROXY="socks5://127.0.0.1:${MIXED_PORT}"
-export no_proxy="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-export NO_PROXY="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
-PROXY_EOF
 
     # 同时写入 systemd 兼容格式 (无 export, 供 EnvironmentFile= 使用)
     local proxy_env="/etc/auto-mihomo/proxy.env"
@@ -536,8 +557,7 @@ SYSENV_EOF
         fi
     fi
 
-    log_info "系统代理已设置 (mixed-port: ${MIXED_PORT})"
-    log_info "运行 'source /etc/profile.d/proxy.sh' 使当前终端生效"
+    log_info "进程级代理已就绪 (systemd EnvironmentFile, mixed-port: ${MIXED_PORT})"
 }
 
 # ===== 7. 验证代理 =====

@@ -29,13 +29,22 @@ set_output=$(
 [[ "$set_output" == $'<-u>\n<openclaw>\n<bash>\n<'"$REPO_DIR"$'/scripts/update_sub.sh>\n<--set>\n<美国 F>' ]] \
     || fail "--set 参数转发错误: $set_output"
 
-printf 'export http_proxy="http://127.0.0.1:7893"\n' > "$TMP_DIR/proxy.sh"
+printf 'http_proxy=http://127.0.0.1:7893\nhttps_proxy=http://127.0.0.1:7893\n' > "$TMP_DIR/proxy.env"
 set +u
-AUTO_MIHOMO_PROXY_FILE="$TMP_DIR/proxy.sh" source "$REPO_DIR/auto_mihomo.sh" --current >/dev/null
+set +a
+AUTO_MIHOMO_PROXY_FILE="$TMP_DIR/proxy.env" source "$REPO_DIR/auto_mihomo.sh" --current >/dev/null
 [[ "${http_proxy:-}" == "http://127.0.0.1:7893" ]] || fail "--current 未应用代理变量"
 [[ "$-" != *u* ]] || fail "--current 污染了调用者的 shell 选项"
+[[ "$-" != *a* ]] || fail "--current 污染了调用者的 allexport 选项"
+bash -c '[[ "$http_proxy" == "http://127.0.0.1:7893" ]]' \
+    || fail "--current 未将代理变量 export 给子进程"
 
-if AUTO_MIHOMO_PROXY_FILE="$TMP_DIR/proxy.sh" bash "$REPO_DIR/auto_mihomo.sh" --current >/dev/null 2>&1; then
+printf '# empty managed file\n' > "$TMP_DIR/empty.env"
+if AUTO_MIHOMO_PROXY_FILE="$TMP_DIR/empty.env" source "$REPO_DIR/auto_mihomo.sh" --current >/dev/null 2>&1; then
+    fail "--current should reject a proxy file without HTTP proxy values"
+fi
+
+if AUTO_MIHOMO_PROXY_FILE="$TMP_DIR/proxy.env" bash "$REPO_DIR/auto_mihomo.sh" --current >/dev/null 2>&1; then
     fail "直接执行 --current 应该提示使用 source"
 else
     status=$?

@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# proxy-run — 让单条命令按需走 Mihomo, 不污染当前 shell。
+#
+# 设计前提: 主机默认保持 DIRECT。只有被 proxy-run 包起来的进程才使用代理,
+# 因此即使 Mihomo 故障, 该命令之后的 shell 以及 SSH / Tailscale 仍然不受影响。
+#
+#   proxy-run curl https://www.google.com
+#   proxy-run git clone https://github.com/xxx/yyy.git
+#   proxy-run npm install -g xxx
+#   proxy-run pip install xxx
+#
+# 注意: 不支持 HTTP_PROXY/HTTPS_PROXY 的程序需要自己的代理参数;
+#       需要 SOCKS 的工具可用 AUTO_MIHOMO_SOCKS_URL 覆盖 ALL_PROXY。
+
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+    echo "用法: proxy-run <command> [args...]" >&2
+    echo "示例: proxy-run curl https://www.google.com" >&2
+    exit 1
+fi
+
+PROXY_URL="${AUTO_MIHOMO_PROXY_URL:-http://127.0.0.1:7893}"
+SOCKS_URL="${AUTO_MIHOMO_SOCKS_URL:-socks5://127.0.0.1:7893}"
+
+export http_proxy="$PROXY_URL"
+export https_proxy="$PROXY_URL"
+export HTTP_PROXY="$PROXY_URL"
+export HTTPS_PROXY="$PROXY_URL"
+export all_proxy="$SOCKS_URL"
+export ALL_PROXY="$SOCKS_URL"
+export no_proxy="localhost,127.0.0.1,::1,10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+export NO_PROXY="$no_proxy"
+
+exec "$@"
