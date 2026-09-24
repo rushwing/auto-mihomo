@@ -104,15 +104,18 @@ sudo bash auto-mihomo/upgrade.sh       # stops services, migrates .env, deploys,
 # 1. Set your Clash subscription URL (prompted by the wizard on first run)
 nano /opt/auto-mihomo/.env
 
-# 2. Run the first update (as service user)
-sudo -u openclaw bash /opt/auto-mihomo/scripts/update_sub.sh --probe-strategy=best
+# 2. Run the first update and select the best node
+/opt/auto-mihomo/auto_mihomo.sh --best
+
+# If automatic probing fails, force a node you have already verified
+/opt/auto-mihomo/auto_mihomo.sh --set "美国F"
 
 # 3. Optional: start extra services only if you need them
 sudo systemctl start auto-mihomo-mcp
 sudo systemctl start openclaw-gateway
 
 # 4. Optional: activate proxy in current shell (for manual curl/git/apt)
-source /etc/profile.d/proxy.sh
+source /opt/auto-mihomo/auto_mihomo.sh --current
 
 # 5. Run post-deploy self-check
 #    (stopped MCP/OpenClaw services are reported as warnings and skipped)
@@ -140,6 +143,7 @@ bash /opt/auto-mihomo/scripts/post_deploy_self_check.sh
 
 ```
 auto-mihomo/
+├── auto_mihomo.sh             # One-click entry: best/manual node/current-shell proxy
 ├── scripts/
 │   ├── update_sub.sh          # Main orchestration script
 │   ├── test_nodes.py          # TCP latency tester (legacy; node selection now uses HTTP probe in update_sub.sh)
@@ -285,10 +289,10 @@ curl http://localhost:8900/mcp/health \
 ### update_sub.sh workflow
 
 1. **Download** — fetches subscription YAML from `MIHOMO_SUB_URL`, validates it contains `proxies`
-2. **Bootstrap node** — selects the first subscription node as a temporary default (used to bring Mihomo up before probing)
+2. **Bootstrap node** — selects the first subscription node as a temporary default, or validates and uses the exact node supplied by `--set`
 3. **Generate** — delegates to `generate_config.py` which builds a complete Mihomo config (written to Mihomo workdir, e.g. `/opt/mihomo/config.yaml`): DNS (fake-ip + DoH, localhost-bound in `process-proxy` mode), proxy groups, GeoIP rules, controller host/secret
 4. **Reload** — first tries Mihomo's `PUT /configs?force=true` API (with Bearer secret if configured); falls back to `systemctl restart`; falls back to direct `nohup` start
-5. **HTTP Probe Select** — iterates nodes sequentially: switches each node via Mihomo API, then sends a real HTTP request through the local mixed-port; picks the lowest-latency responsive node and reloads config with it as default
+5. **HTTP Probe Select** — iterates nodes sequentially: switches each node via Mihomo API, then sends a real HTTP request through the local mixed-port; picks the lowest-latency responsive node and reloads config with it as default. This step is skipped when a node is forced with `--set`.
 6. **Proxy (process-proxy mode)** — writes environment variables to `/etc/profile.d/proxy.sh` and `/etc/auto-mihomo/proxy.env`
 7. **Verify** — tests connectivity through the proxy via `MIHOMO_HTTP_PROBE_URL`
 
@@ -455,7 +459,7 @@ It verifies:
 bash build_package.sh                    # ARM64 (Pi 5)
 bash build_package.sh --arch armv7       # ARMv7 (Pi 3/4)
 bash build_package.sh --arch amd64       # x86_64
-bash build_package.sh --mihomo v1.19.0   # Specific Mihomo version
+bash build_package.sh --mihomo v1.19.31  # Specific Mihomo version
 bash build_package.sh --py 3.12          # Target Python version
 ```
 
@@ -476,6 +480,12 @@ Output: `dist/auto-mihomo-<version>-<arch>-<commit>.tar.gz`
 | x86_64 (amd64) | Intel/AMD servers | `--arch amd64` |
 
 ## Changelog
+
+### v1.3.0
+
+- Add `auto_mihomo.sh` as a one-command entry point for best-node probing, forced node selection, and current-shell proxy activation
+- Add exact-name forced node selection to `update_sub.sh`; forced selection is validated against the refreshed subscription and skips automatic probing
+- Update the default bundled/online Mihomo version to v1.19.31
 
 ### v1.2.3
 

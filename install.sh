@@ -17,7 +17,7 @@
 set -euo pipefail
 
 # ===== 配置 =====
-MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.0}"
+MIHOMO_VERSION="${MIHOMO_VERSION:-v1.19.31}"
 MIHOMO_HOME="/opt/mihomo"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 INSTALL_DIR="/opt/auto-mihomo"
@@ -152,6 +152,7 @@ rsync -a \
     --exclude='dist/' \
     "${SCRIPT_DIR}/" "${INSTALL_DIR}/"
 chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
 echo "  完成"
 
 # ===== [1/7] 检测架构 =====
@@ -282,6 +283,7 @@ echo "  Python 依赖安装完成 (.venv)"
 
 # ===== 确保脚本可执行 =====
 chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
 
 # ===== 设置项目目录权限 =====
 echo ""

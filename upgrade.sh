@@ -681,6 +681,7 @@ main() {
 
     # 确保脚本可执行
     chmod +x "${INSTALL_DIR}/scripts/"*.sh 2>/dev/null || true
+    chmod +x "${INSTALL_DIR}/auto_mihomo.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/upgrade.sh" 2>/dev/null || true
     chmod +x "${INSTALL_DIR}/install.sh" 2>/dev/null || true
     ln -sfn "${MIHOMO_HOME}/config.yaml" "${INSTALL_DIR}/config.yaml" 2>/dev/null || true
